@@ -27,7 +27,7 @@ Built in Go as a single binary with zero external dependencies, Brutus integrate
 
 **Key features:**
 - **Zero dependencies:** Single binary, cross-platform (Linux, Windows, macOS)
-- **22 protocols:** SSH, MySQL, PostgreSQL, MSSQL, Redis, SMB, LDAP, HTTP Basic Auth, Browser (form-based), and more
+- **23 protocols:** SSH, MySQL, PostgreSQL, MSSQL, Redis, SMB, LDAP, WinRM, SNMP, HTTP Basic Auth, and more
 - **Pipeline integration:** Native support for fingerprintx and naabu workflows
 - **Embedded bad keys:** Built-in collection of known SSH keys (Vagrant, F5, ExaGrid, etc.)
 - **Go library:** Import directly into your security automation tools
@@ -306,7 +306,7 @@ Brutus outputs only successful credentials in JSONL format (one JSON object per 
 
 ## Supported Protocols
 
-Brutus supports **22 protocols**:
+Brutus supports **23 protocols**:
 
 ### Network Services
 | Protocol | Port | Auth Methods | Use Case |
@@ -315,6 +315,7 @@ Brutus supports **22 protocols**:
 | FTP | 21 | Password | File servers, NAS devices |
 | Telnet | 23 | Password | Legacy systems, IoT devices |
 | VNC | 5900 | Password | Remote desktops |
+| SNMP | 161 | Community String | Network devices, printers |
 
 ### Web Services
 | Protocol | Port | Auth Methods | Use Case |
@@ -327,6 +328,7 @@ Brutus supports **22 protocols**:
 |----------|------|--------------|----------|
 | SMB | 445 | Password, NTLM | Windows networks, file shares |
 | LDAP | 389/636 | Bind DN | Active Directory, identity |
+| WinRM | 5985/5986 | NTLM | Windows remote management |
 
 ### Databases
 | Protocol | Port | Auth Methods | Use Case |
