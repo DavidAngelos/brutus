@@ -41,8 +41,8 @@ WORKDIR /home/brutus
 # Copy binary from builder
 COPY --from=builder /app/brutus /usr/local/bin/brutus
 
-# Copy wordlists (optional - embedded in binary via badkeys, but useful for customization)
-COPY --from=builder /app/wordlists /home/brutus/wordlists
+# Copy wordlists (optional - embedded in binary, but useful for customization)
+COPY --from=builder /app/pkg/brutus/wordlists /home/brutus/wordlists
 
 ENTRYPOINT ["brutus"]
 CMD ["--help"]

@@ -27,7 +27,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/praetorian-inc/brutus/pkg/badkeys"
 	"github.com/praetorian-inc/brutus/pkg/brutus"
 
 	// Import plugins and analyzers to register them
@@ -730,6 +729,8 @@ func runSingleTarget(target, protocol string, base *baseConfigOptions) ([]brutus
 		Usernames:     base.usernames,
 		Passwords:     base.passwords,
 		Keys:          base.keys,
+		UseDefaults:   true,
+		NoBadkeys:     !base.useBadkeys,
 		Threads:       base.threads,
 		Timeout:       base.timeout,
 		StopOnSuccess: base.stopOnSuccess,
@@ -741,23 +742,7 @@ func runSingleTarget(target, protocol string, base *baseConfigOptions) ([]brutus
 		SprayMode:     base.sprayMode,
 	}
 
-	// Handle SSH badkeys - add embedded bad keys as paired credentials (strict 1:1 username:key)
-	// Skip if user provided explicit keys with -k (they want to test specific keys only)
-	if protocol == "ssh" && base.useBadkeys && len(config.Keys) == 0 {
-		badkeysCreds := badkeys.GetSSHCredentials()
-		// Add each badkey as a paired credential (username + key together)
-		for _, cred := range badkeysCreds {
-			config.Credentials = append(config.Credentials, brutus.Credential{
-				Username: cred.Username,
-				Key:      cred.Key,
-			})
-		}
-		if base.verbose {
-			fmt.Fprintf(os.Stderr, "[verbose] Loaded %d embedded bad SSH keys (strict 1:1 username:key pairing)\n", len(badkeysCreds))
-		}
-	}
-
-	// Handle SNMP-specific tier selection
+	// Handle SNMP-specific tier selection (tiers are CLI-only, not in library defaults)
 	if protocol == "snmp" && len(config.Passwords) == 0 {
 		if !snmp.ValidateTier(base.snmpTier) {
 			if base.useColor {
@@ -769,52 +754,6 @@ func runSingleTarget(target, protocol string, base *baseConfigOptions) ([]brutus
 			return nil, false
 		}
 		config.Passwords = snmp.GetCommunityStrings(snmp.Tier(base.snmpTier))
-	}
-
-	// Handle MySQL default credentials (when no passwords provided)
-	if protocol == "mysql" && len(config.Credentials) == 0 && len(config.Passwords) == 0 {
-		config.Credentials = []brutus.Credential{
-			{Username: "root", Password: ""},
-			{Username: "root", Password: "root"},
-			{Username: "root", Password: "mysql"},
-			{Username: "root", Password: "password"},
-			{Username: "root", Password: "toor"},
-			{Username: "mysql", Password: "mysql"},
-			{Username: "admin", Password: "admin"},
-		}
-		if base.verbose {
-			fmt.Fprintf(os.Stderr, "[verbose] Loaded %d default MySQL credentials\n", len(config.Credentials))
-		}
-	}
-
-	// Handle Redis - password-only authentication (username is ignored in simple auth mode)
-	// Only test unique passwords, not username×password combinations
-	if protocol == "redis" {
-		if len(config.Passwords) == 0 {
-			// Load defaults if no passwords provided
-			config.Passwords = []string{"", "redis", "password", "admin", "root"}
-			if base.verbose {
-				fmt.Fprintf(os.Stderr, "[verbose] Loaded %d default Redis passwords\n", len(config.Passwords))
-			}
-		}
-		// Redis ignores username in simple auth mode - just use "default"
-		config.Usernames = []string{"default"}
-	}
-
-	// Handle FTP default credentials (when no passwords provided)
-	if protocol == "ftp" && len(config.Credentials) == 0 && len(config.Passwords) == 0 {
-		config.Credentials = []brutus.Credential{
-			{Username: "anonymous", Password: ""},
-			{Username: "anonymous", Password: "anonymous@"},
-			{Username: "ftp", Password: "ftp"},
-			{Username: "admin", Password: "admin"},
-			{Username: "root", Password: "root"},
-			{Username: "user", Password: "user"},
-			{Username: "ftpuser", Password: "ftpuser"},
-		}
-		if base.verbose {
-			fmt.Fprintf(os.Stderr, "[verbose] Loaded %d default FTP credentials\n", len(config.Credentials))
-		}
 	}
 
 	// Handle HTTP with AI-researched credentials
@@ -866,16 +805,6 @@ func runSingleTarget(target, protocol string, base *baseConfigOptions) ([]brutus
 		if browserPlugin != nil {
 			config.Plugin = browserPlugin
 		}
-	}
-
-	// Check if we have any credentials to test
-	hasCreds := len(config.Credentials) > 0 ||
-		(len(config.Usernames) > 0 && (len(config.Passwords) > 0 || len(config.Keys) > 0))
-	if !hasCreds {
-		if base.verbose {
-			fmt.Fprintf(os.Stderr, "[verbose] Skipping %s: no credentials provided for %s\n", target, protocol)
-		}
-		return nil, false
 	}
 
 	// Verbose: print config summary before starting
