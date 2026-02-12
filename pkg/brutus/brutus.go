@@ -392,13 +392,12 @@ func (c *Config) applyDefaults() {
 		for _, k := range badkeys.GetSSHCredentials() {
 			c.Credentials = append(c.Credentials, Credential{Username: k.Username, Key: k.Key})
 		}
-		hasCreds = len(c.Credentials) > 0
 	}
 
-	// Load wordlist defaults when no explicit credentials were provided
+	// Load wordlist defaults when no user-supplied credentials were provided
 	if !hasCreds && !hasPasswords && !hasKeys {
 		if defaults := DefaultCredentials(c.Protocol); len(defaults) > 0 {
-			c.Credentials = defaults
+			c.Credentials = append(c.Credentials, defaults...)
 		}
 	}
 }
