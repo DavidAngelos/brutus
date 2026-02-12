@@ -1,0 +1,199 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: brutus
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: brutus
+    main: ./cmd/brutus
+    binary: brutus
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.BuildTime={{.Date}}
+      - -X main.CommitSHA={{.ShortCommit}}
+    goos:
+      - linux
+      - darwin
+      - windows
+      - freebsd
+    goarch:
+      - amd64
+      - arm64
+      - "386"
+      - arm
+    goarm:
+      - "7"
+    ignore:
+      # Ignore 386 and arm for non-Linux platforms
+      - goos: darwin
+        goarch: "386"
+      - goos: darwin
+        goarch: arm
+      - goos: windows
+        goarch: arm
+      - goos: freebsd
+        goarch: "386"
+      - goos: freebsd
+        goarch: arm
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}-{{ .Os }}-{{ .Arch }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: SHA256SUMS.txt
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^ci:"
+      - "^chore:"
+      - "^test:"
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Performance
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: Security
+      regexp: '^.*?sec(\([[:word:]]+\))??!?:.+$'
+      order: 3
+    - title: Other
+      order: 999
+
+# Docker builds - using legacy format (dockers_v2 is not yet stable)
+dockers:
+  - id: brutus-amd64
+    image_templates:
+      - "ghcr.io/praetorian-inc/brutus:{{ .Tag }}-amd64"
+      - "ghcr.io/praetorian-inc/brutus:latest-amd64"
+    use: buildx
+    goos: linux
+    goarch: amd64
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.description=Modern credential testing tool in pure Go"
+      - "--label=org.opencontainers.image.source=https://github.com/praetorian-inc/brutus"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+    dockerfile: Dockerfile.goreleaser
+
+  - id: brutus-arm64
+    image_templates:
+      - "ghcr.io/praetorian-inc/brutus:{{ .Tag }}-arm64"
+      - "ghcr.io/praetorian-inc/brutus:latest-arm64"
+    use: buildx
+    goos: linux
+    goarch: arm64
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.description=Modern credential testing tool in pure Go"
+      - "--label=org.opencontainers.image.source=https://github.com/praetorian-inc/brutus"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+    dockerfile: Dockerfile.goreleaser
+
+docker_manifests:
+  - name_template: "ghcr.io/praetorian-inc/brutus:{{ .Tag }}"
+    image_templates:
+      - "ghcr.io/praetorian-inc/brutus:{{ .Tag }}-amd64"
+      - "ghcr.io/praetorian-inc/brutus:{{ .Tag }}-arm64"
+  - name_template: "ghcr.io/praetorian-inc/brutus:latest"
+    image_templates:
+      - "ghcr.io/praetorian-inc/brutus:latest-amd64"
+      - "ghcr.io/praetorian-inc/brutus:latest-arm64"
+
+release:
+  github:
+    owner: praetorian-inc
+    name: brutus
+  draft: false
+  prerelease: auto
+  name_template: "Brutus {{ .Tag }}"
+  header: |
+    ## Installation
+
+    ### Go Install
+    ```bash
+    go install github.com/praetorian-inc/brutus/cmd/brutus@{{ .Tag }}
+    ```
+
+    ### Download Binary
+    Download the appropriate binary for your platform from the assets below.
+
+    ```bash
+    # Linux (amd64)
+    curl -LO https://github.com/praetorian-inc/brutus/releases/download/{{ .Tag }}/brutus-linux-amd64.tar.gz
+    tar -xzf brutus-linux-amd64.tar.gz
+    chmod +x brutus
+    sudo mv brutus /usr/local/bin/
+
+    # macOS (Apple Silicon)
+    curl -LO https://github.com/praetorian-inc/brutus/releases/download/{{ .Tag }}/brutus-darwin-arm64.tar.gz
+    tar -xzf brutus-darwin-arm64.tar.gz
+    chmod +x brutus
+    sudo mv brutus /usr/local/bin/
+
+    # Docker
+    docker pull ghcr.io/praetorian-inc/brutus:{{ .Tag }}
+    ```
+
+    ### Verify Checksums
+    ```bash
+    sha256sum -c SHA256SUMS.txt
+    ```
+
+  footer: |
+    ## Supported Platforms
+
+    | OS | Architecture | Binary |
+    |----|--------------|--------|
+    | Linux | amd64 | `brutus-linux-amd64.tar.gz` |
+    | Linux | arm64 | `brutus-linux-arm64.tar.gz` |
+    | Linux | 386 | `brutus-linux-386.tar.gz` |
+    | Linux | arm (v7) | `brutus-linux-armv7.tar.gz` |
+    | macOS | amd64 (Intel) | `brutus-darwin-amd64.tar.gz` |
+    | macOS | arm64 (Apple Silicon) | `brutus-darwin-arm64.tar.gz` |
+    | Windows | amd64 | `brutus-windows-amd64.zip` |
+    | Windows | arm64 | `brutus-windows-arm64.zip` |
+    | Windows | 386 | `brutus-windows-386.zip` |
+    | FreeBSD | amd64 | `brutus-freebsd-amd64.tar.gz` |
+    | FreeBSD | arm64 | `brutus-freebsd-arm64.tar.gz` |
+
+    ---
+    **Full Changelog**: https://github.com/praetorian-inc/brutus/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+announce:
+  skip: true

@@ -1,0 +1,507 @@
+<img width="2752" height="1536" alt="brutus" src="https://github.com/user-attachments/assets/f2f91f6a-e416-477f-801c-1c701e2147ac" />
+<h1 align="center">Brutus</h1>
+
+<p align="center">
+  <em>"Et tu, Brute?" — The last words before credentials fall.</em>
+</p>
+
+<p align="center">
+  <strong>Modern credential testing tool in pure Go</strong>
+</p>
+
+<p align="center">
+  <a href="#installation">Installation</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#pipeline-integration">Pipeline</a> •
+  <a href="#supported-protocols">Protocols</a> •
+  <a href="#library-integration">Library</a>
+</p>
+
+---
+
+## Overview
+
+Brutus is a multi-protocol authentication testing tool designed to address a critical gap in offensive security tooling: efficient credential validation across diverse network services. While HTTP-focused tools are abundant, penetration testers and red team operators frequently encounter databases, SSH, SMB, and other network services that require purpose-built authentication testing capabilities.
+
+Built in Go as a single binary with zero external dependencies, Brutus integrates seamlessly with [fingerprintx](https://github.com/praetorian-inc/fingerprintx) for automated service discovery, enabling operators to rapidly identify and test authentication vectors across entire network ranges.
+
+**Key features:**
+- **Zero dependencies:** Single binary, cross-platform (Linux, Windows, macOS)
+- **22 protocols:** SSH, MySQL, PostgreSQL, MSSQL, Redis, SMB, LDAP, HTTP Basic Auth, Browser (form-based), and more
+- **Pipeline integration:** Native support for fingerprintx and naabu workflows
+- **Embedded bad keys:** Built-in collection of known SSH keys (Vagrant, F5, ExaGrid, etc.)
+- **Go library:** Import directly into your security automation tools
+- **Production ready:** Rate limiting, connection pooling, and comprehensive error handling
+
+---
+
+## Why Brutus?
+
+Traditional tools like **THC Hydra** have served the security community well, but they come with significant friction: complex dependency chains, platform-specific compilation issues, and no native integration with modern reconnaissance workflows.
+
+**Brutus** is purpose-built for modern offensive security:
+
+- **True zero-dependency deployment:** Download a single binary and run. No `libssh-dev`, no `libmysqlclient-dev`, no compilation errors. Works identically on Linux, macOS, and Windows.
+
+- **Native pipeline integration:** Brutus speaks JSON and integrates directly with [fingerprintx](https://github.com/praetorian-inc/fingerprintx) and [naabu](https://github.com/projectdiscovery/naabu). Pipe discovered services straight into credential testing without format conversion or scripting.
+
+- **Embedded intelligence:** Known SSH bad keys (Vagrant, F5 BIG-IP, ExaGrid, etc.) are compiled into the binary and tested automatically for SSH targets.
+
+- **Library-first design:** Import Brutus directly into your Go security tools. Build custom automation without shelling out to external processes.
+
+```bash
+# Full network credential audit in one pipeline
+naabu -host 10.0.0.0/24 -p 22,3306,5432,6379 -silent | fingerprintx --json | brutus --json
+```
+
+---
+
+## Use Cases
+
+### Penetration Testing
+- Validate discovered credentials across multiple services during internal assessments
+- Test password reuse patterns across database and file share services
+- Identify default credentials on newly deployed infrastructure
+
+### Red Team Operations
+- Rapid credential validation after password dumps or phishing campaigns
+- Test lateral movement opportunities across network services
+- Validate compromised credentials across heterogeneous environments
+
+### Private Key Spraying
+
+Found a private key on a compromised system? Spray it across the network to find where else it grants access:
+
+```bash
+# Discover SSH services and spray a found private key
+naabu -host 10.0.0.0/24 -p 22 -silent | \
+  fingerprintx --json | \
+  brutus -u root,admin,ubuntu,deploy -k /path/to/found_key --json
+```
+
+This pipeline discovers all SSH services, identifies them with fingerprintx, and tests the compromised key against common usernames—revealing lateral movement opportunities in seconds.
+
+### Web Admin Panel Testing
+
+Discover HTTP services with Basic Auth and test default credentials:
+
+```bash
+# Discover and test admin panels across a network
+naabu -host 10.0.0.0/24 -p 80,443,3000,8080,9090 -silent | \
+  fingerprintx --json | \
+  brutus --json
+```
+
+### Security Validation
+- Test default credentials on newly deployed services
+- Validate password policy enforcement across platforms
+- Generate audit trails for compliance and security assessments
+
+---
+
+## Installation
+
+### Pre-built Binaries (Recommended)
+
+Download from [GitHub Releases](https://github.com/praetorian-inc/brutus/releases):
+
+```bash
+# Linux (amd64)
+curl -L https://github.com/praetorian-inc/brutus/releases/latest/download/brutus-linux-amd64 -o brutus
+chmod +x brutus
+sudo mv brutus /usr/local/bin/
+
+# macOS (Apple Silicon)
+curl -L https://github.com/praetorian-inc/brutus/releases/latest/download/brutus-darwin-arm64 -o brutus
+chmod +x brutus
+sudo mv brutus /usr/local/bin/
+
+# macOS (Intel)
+curl -L https://github.com/praetorian-inc/brutus/releases/latest/download/brutus-darwin-amd64 -o brutus
+chmod +x brutus
+sudo mv brutus /usr/local/bin/
+
+# Windows (PowerShell)
+Invoke-WebRequest -Uri https://github.com/praetorian-inc/brutus/releases/latest/download/brutus-windows-amd64.exe -OutFile brutus.exe
+```
+
+### Go Install
+
+```bash
+go install github.com/praetorian-inc/brutus/cmd/brutus@latest
+```
+
+---
+
+## Quick Start
+
+### Basic Usage
+
+```bash
+# Test SSH with embedded badkeys (tested by default)
+brutus --target 192.168.1.100:22 --protocol ssh
+
+# Test with specific credentials
+brutus --target 192.168.1.100:22 --protocol ssh -u root -p toor
+
+# Test with username and password lists
+brutus --target 192.168.1.100:22 --protocol ssh -U users.txt -P passwords.txt
+
+# Test MySQL database
+brutus --target 192.168.1.100:3306 --protocol mysql -u root -p password
+
+# Test SSH with a specific private key
+brutus --target 192.168.1.100:22 --protocol ssh -u deploy -k /path/to/id_rsa
+
+# Increase threads for faster testing
+brutus --target 192.168.1.100:22 --protocol ssh -t 20
+
+# JSON output for scripting
+brutus --target 192.168.1.100:22 --protocol ssh --json
+```
+
+### Output Example
+
+```
+$ brutus --target 192.168.1.100:22 --protocol ssh -u root,admin -p toor,password,admin
+[*] Loaded 9 badkeys for SSH testing
+[+] VALID: ssh root:toor @ 192.168.1.100:22 (1.23s)
+```
+
+With verbose mode (`-v`):
+
+```
+$ brutus --target 192.168.1.100:22 --protocol ssh -u root -p password,toor -v
+[*] Loaded 9 badkeys for SSH testing
+[-] FAILED: ssh root:password @ 192.168.1.100:22 (0.45s)
+[+] VALID: ssh root:toor @ 192.168.1.100:22 (0.52s)
+```
+
+JSON output for pipeline integration (outputs only successful credentials):
+
+```
+$ brutus --target 192.168.1.100:22 --protocol ssh -u root -p toor --json
+{"protocol":"ssh","target":"192.168.1.100:22","username":"root","password":"toor","duration":"1.234567ms","banner":"SSH-2.0-OpenSSH_8.9p1"}
+```
+
+---
+
+## Pipeline Integration
+
+Brutus integrates seamlessly with **[fingerprintx](https://github.com/praetorian-inc/fingerprintx)** and **[naabu](https://github.com/projectdiscovery/naabu)** for complete network reconnaissance.
+
+### Real-World Scenarios
+
+#### Scenario 1: Scanning a Corporate /24 Network
+
+```bash
+# Discover all open ports, identify services, test default credentials
+naabu -host 10.10.10.0/24 -p 22,23,21,3306,5432,6379,27017,445 -silent | \
+  fingerprintx --json | \
+  brutus --json -o results.json
+
+# Review findings (all output is successful credentials)
+cat results.json | jq '.'
+```
+
+#### Scenario 2: Bug Bounty Recon on a Target Domain
+
+```bash
+# Full pipeline against a single target
+naabu -host target.example.com -top-ports 1000 -silent | \
+  fingerprintx --json | \
+  brutus
+
+# Or scan a list of subdomains
+cat subdomains.txt | naabu -silent | fingerprintx --json | brutus
+```
+
+#### Scenario 3: Database Hunting in an Internal Assessment
+
+```bash
+# Find and test all databases in a range
+naabu -host 192.168.0.0/16 -p 3306,5432,1433,27017,6379,9042 -silent | \
+  fingerprintx --json | \
+  brutus -t 5 --json | \
+  tee database-findings.json
+
+# Extract credentials in readable format
+jq -r '"\(.target) \(.username):\(.password)"' database-findings.json
+```
+
+#### Scenario 4: SSH Key Testing Across Infrastructure
+
+```bash
+# Test embedded bad keys (Vagrant, F5 BIG-IP, ExaGrid, etc.) across a range
+# Badkeys are tested by default for SSH services
+naabu -host 10.0.0.0/8 -p 22 -rate 1000 -silent | \
+  fingerprintx --json | \
+  brutus --json -o ssh-key-findings.json
+
+# Find systems using SSH keys (key field is true)
+cat ssh-key-findings.json | jq 'select(.key == true)'
+```
+
+#### Scenario 5: Targeted Service Testing
+
+```bash
+# Test only Redis instances found in the network
+naabu -host 172.16.0.0/12 -p 6379 -silent | \
+  fingerprintx --json | \
+  brutus
+
+# Test only MongoDB with custom credentials
+naabu -host 10.0.0.0/24 -p 27017 -silent | \
+  fingerprintx --json | \
+  brutus -u admin,root,mongodb -p admin,password,mongodb
+```
+
+### Pipeline Input Format
+
+Brutus accepts input from fingerprintx in JSON format:
+
+```bash
+# fingerprintx JSON output
+{"ip":"192.168.1.100","port":22,"service":"ssh","version":"OpenSSH_8.9p1"}
+{"ip":"192.168.1.101","port":3306,"service":"mysql","version":"8.0.32"}
+{"ip":"192.168.1.102","port":6379,"service":"redis","version":"7.0.5"}
+```
+
+Brutus automatically:
+- Parses the JSON stream
+- Maps services to protocols
+- Tests appropriate default credentials
+- Outputs results in matching JSON format
+
+### Pipeline Output Format
+
+Brutus outputs only successful credentials in JSONL format (one JSON object per line):
+
+```bash
+# Brutus JSON output (with --json flag) - only successful authentications
+{"protocol":"ssh","target":"192.168.1.100:22","username":"root","password":"toor","duration":"1.234567ms","banner":"SSH-2.0-OpenSSH_8.9p1"}
+{"protocol":"mysql","target":"192.168.1.101:3306","username":"root","password":"","duration":"890.123µs"}
+{"protocol":"ssh","target":"192.168.1.103:22","username":"vagrant","key":true,"duration":"2.345678ms","banner":"SSH-2.0-OpenSSH_9.6"}
+```
+
+**Note:** Failed authentication attempts are not included in JSON output. The `key` field appears (as `true`) when authentication used an SSH key instead of a password.
+
+---
+
+## Comparison
+
+| Feature | Hydra | Medusa | Ncrack | **Brutus** |
+|---------|:-----:|:------:|:------:|:----------:|
+| Single Binary | ❌ | ❌ | ❌ | ✅ |
+| Zero Dependencies | ❌ | ❌ | ❌ | ✅ |
+| fingerprintx Pipeline | ❌ | ❌ | ❌ | ✅ |
+| JSON Streaming | ⚠️ | ❌ | ❌ | ✅ |
+| Cross-Platform | ⚠️ | ⚠️ | ⚠️ | ✅ |
+| Consistent Errors | ⚠️ | ⚠️ | ⚠️ | ✅ |
+| Active Development | ✅ | ⚠️ | ❌ | ✅ |
+| Embedded Bad Keys | ❌ | ❌ | ❌ | ✅ |
+| Go Library Import | ❌ | ❌ | ❌ | ✅ |
+
+---
+
+## Supported Protocols
+
+Brutus supports **22 protocols**:
+
+### Network Services
+| Protocol | Port | Auth Methods | Use Case |
+|----------|------|--------------|----------|
+| SSH | 22 | Password, Private Keys | Servers, network equipment |
+| FTP | 21 | Password | File servers, NAS devices |
+| Telnet | 23 | Password | Legacy systems, IoT devices |
+| VNC | 5900 | Password | Remote desktops |
+
+### Web Services
+| Protocol | Port | Auth Methods | Use Case |
+|----------|------|--------------|----------|
+| HTTP | 80 | Basic Auth | Admin panels (Grafana, Jenkins, etc.) |
+| HTTPS | 443 | Basic Auth | Secure admin panels |
+
+### Enterprise Infrastructure
+| Protocol | Port | Auth Methods | Use Case |
+|----------|------|--------------|----------|
+| SMB | 445 | Password, NTLM | Windows networks, file shares |
+| LDAP | 389/636 | Bind DN | Active Directory, identity |
+
+### Databases
+| Protocol | Port | Auth Methods | Use Case |
+|----------|------|--------------|----------|
+| MySQL | 3306 | Password | Web applications |
+| PostgreSQL | 5432 | Password | Modern applications |
+| MSSQL | 1433 | Password | Enterprise applications |
+| MongoDB | 27017 | Password | NoSQL backends |
+| Redis | 6379 | Password | Caching, sessions |
+| Neo4j | 7687 | Password | Graph databases |
+| Cassandra | 9042 | Password | Distributed databases |
+| CouchDB | 5984 | HTTP Basic | Document stores |
+| Elasticsearch | 9200 | HTTP Basic | Search engines |
+| InfluxDB | 8086 | HTTP Basic | Time-series data |
+
+### Communications
+| Protocol | Port | Auth Methods | Use Case |
+|----------|------|--------------|----------|
+| SMTP | 25/587 | Password | Mail relay |
+| IMAP | 143/993 | Password | Mailbox access |
+| POP3 | 110/995 | Password | Mailbox access |
+
+---
+
+## Embedded SSH Bad Keys
+
+Single binary deployment with no external key files needed. Each key is paired with its default username for smart credential mapping, and CVE tracking enables compliance queries.
+
+Brutus carries the **[rapid7/ssh-badkeys](https://github.com/rapid7/ssh-badkeys)** and **[Vagrant](https://github.com/hashicorp/vagrant)** key collections embedded in the binary:
+
+```bash
+# Test all embedded bad keys against a target (enabled by default for SSH)
+brutus --target 192.168.1.100:22 --protocol ssh
+
+# Combine with pipeline for network-wide key testing
+naabu -host 10.0.0.0/24 -p 22 -silent | fingerprintx --json | brutus
+```
+
+### Embedded Key Collection
+
+| Product | CVE | Default User | Description |
+|---------|-----|--------------|-------------|
+| Vagrant | - | vagrant | HashiCorp Vagrant insecure key |
+| F5 BIG-IP | CVE-2012-1493 | root | Static SSH host key |
+| ExaGrid | CVE-2016-1561 | root | Backup appliance backdoor |
+| Barracuda | CVE-2014-8428 | cluster | Load balancer VM |
+| Ceragon FibeAir | CVE-2015-0936 | mateidu | Wireless backhaul |
+| Array Networks | - | sync | vAPV/vxAG appliances |
+| Quantum DXi | - | root | Deduplication appliances |
+| Loadbalancer.org | - | root | Enterprise load balancers |
+
+---
+
+## Library Integration
+
+For developers building security automation tools, Brutus can also be imported as a Go library:
+
+```bash
+go get github.com/praetorian-inc/brutus
+```
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+
+    "github.com/praetorian-inc/brutus/pkg/brutus"
+    _ "github.com/praetorian-inc/brutus/pkg/builtins" // registers all protocols and analyzers
+)
+
+func main() {
+    config := &brutus.Config{
+        Target:        "192.168.1.100:22",
+        Protocol:      "ssh",
+        Usernames:     []string{"root", "admin"},
+        Passwords:     []string{"password", "admin", "toor"},
+        Timeout:       5 * time.Second,
+        Threads:       10,
+        StopOnSuccess: true,
+    }
+
+    results, err := brutus.Brute(config)
+    if err != nil {
+        panic(err)
+    }
+
+    for _, r := range results {
+        if r.Success {
+            fmt.Printf("[+] Valid: %s:%s\n", r.Username, r.Password)
+        }
+    }
+}
+```
+
+---
+
+## Experimental: AI-Powered Credential Detection
+
+> **⚠️ Experimental Feature:** AI features require external API keys and are under active development.
+
+### The `--experimental-ai` Flag
+
+The `--experimental-ai` flag enables automatic credential detection for HTTP services:
+
+```bash
+# Set up API keys
+export ANTHROPIC_API_KEY="your-anthropic-key"    # Required: Claude Vision for device identification
+export PERPLEXITY_API_KEY="your-perplexity-key"  # Optional: additional web search
+
+# AI-powered credential testing against HTTP services
+naabu -host 192.168.1.0/24 -p 80,443,8080 -silent | \
+  fingerprintx --json | \
+  brutus --experimental-ai
+```
+
+**How it works:**
+
+1. **Detection** — Brutus probes HTTP targets to detect auth type (Basic Auth vs form-based)
+2. **Device Identification** — Claude Vision analyzes screenshots to identify the device/application
+3. **Credential Suggestions** — Claude suggests default credentials from its training data
+4. **Optional Web Search** — Perplexity (if configured) searches for additional credentials online
+5. **Testing** — Tests the discovered credentials against the target
+
+**For HTTP Basic Auth targets:**
+- Probes `/` to capture HTTP headers
+- Identifies device from Server header, WWW-Authenticate realm, etc.
+- Claude suggests likely default credentials
+- Tests credential pairs automatically
+
+**For HTTP form-based auth targets:**
+- Uses headless Chrome to render and screenshot the page
+- Claude Vision identifies the login form, device type, and suggests credentials
+- Perplexity (optional) searches for additional default credentials
+- Browser automation fills and submits the form
+
+**Requirements:**
+- `ANTHROPIC_API_KEY` — **Required** for Claude Vision (device identification + credential suggestions)
+- `PERPLEXITY_API_KEY` — *Optional* for additional web search research
+- Chrome/Chromium installed (for form-based auth only)
+
+**Non-HTTP protocols (SSH, MySQL, etc.) are unaffected by `--experimental-ai`** — they continue to use standard credential testing.
+
+---
+
+## Known Limitations
+
+### RDP Protocol Not Supported
+
+**TL;DR:** We implemented RDP support, tested it, and removed it. Here's the full story.
+
+We originally implemented RDP authentication testing using a Rust FFI library ([rdp-rs](https://github.com/citronneur/rdp-rs)) wrapped via CGO. This approach worked in development but introduced several problems:
+
+**Build Complexity:**
+- Required Rust toolchain alongside Go
+- CGO cross-compilation was fragile (Windows MSVC vs MinGW incompatibility)
+- GitHub Actions macOS Intel runners frequently got cancelled
+- Static linking the Rust library added significant build time
+
+**Runtime Issues:**
+- TLS/NLA negotiation failures against standard Windows Server RDP (GCP default images)
+- Intermittent SSL errors: `tlsv1 alert internal error` / `errSSLInternal (-9838)`
+- The underlying `rdp-rs` library has limited CredSSP/NLA support
+
+**Decision:** Rather than ship a broken protocol, we removed RDP entirely. This keeps Brutus as a true zero-dependency, single-binary tool that "just works" across all platforms.
+
+**Want to help?** A pure Go RDP implementation would be the ideal solution. The protocol is well-documented:
+- [MS-RDPBCGR](https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr) - Basic Connectivity and Graphics Remoting
+- [MS-CSSP](https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-cssp) - Credential Security Support Provider (NLA)
+
+This could be an interesting experiment for autonomous AI agents—given test RDP servers, the spec converted to markdown, and Rust-to-Go translation patterns, an agent harness could potentially iterate toward a working pure Go implementation.
+
+### Browser Plugin
+
+- Requires Chrome/Chromium installed locally
+- Headless mode may not work on all systems 
+- Some JavaScript-heavy login pages may require additional wait time

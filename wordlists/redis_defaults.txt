@@ -1,0 +1,9 @@
+# Redis Default Credentials
+# Format: username:password (Redis 6+ supports ACL usernames)
+# Note: Many Redis instances have no password (empty password = valid if no auth configured)
+default:
+default:redis
+default:password
+admin:admin
+root:root
+redis:redis

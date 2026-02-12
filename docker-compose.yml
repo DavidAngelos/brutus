@@ -1,0 +1,194 @@
+version: '3.8'
+
+# Docker Compose for local integration testing
+# Matches the CI workflow service configuration
+#
+# Usage:
+#   docker compose up -d
+#   source .env.test  # Set environment variables
+#   go test -tags=integration -v ./...
+#   docker compose down
+
+services:
+  # ==================== Network Services ====================
+
+  ssh:
+    image: linuxserver/openssh-server:latest
+    ports:
+      - "2222:2222"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - PASSWORD_ACCESS=true
+      - USER_NAME=testuser
+      - USER_PASSWORD=testpass
+
+  ftp:
+    image: fauria/vsftpd
+    ports:
+      - "21:21"
+      - "21100-21110:21100-21110"
+    environment:
+      - FTP_USER=ftpuser
+      - FTP_PASS=ftppass
+      - PASV_ADDRESS=127.0.0.1
+      - PASV_MIN_PORT=21100
+      - PASV_MAX_PORT=21110
+
+  telnet:
+    image: wistic/telnetd
+    ports:
+      - "23:23"
+    # Default credentials: user/password
+
+  vnc:
+    image: consol/rocky-xfce-vnc:latest
+    ports:
+      - "5901:5901"
+    environment:
+      - VNC_PW=vncpass
+
+  # ==================== Enterprise Infrastructure ====================
+
+  smb:
+    image: dperson/samba
+    ports:
+      - "445:445"
+      - "139:139"
+    environment:
+      - USER=smbuser;smbpass
+      - SHARE=public;/share
+
+  ldap:
+    image: osixia/openldap:1.5.0
+    ports:
+      - "389:389"
+      - "636:636"
+    environment:
+      - LDAP_ORGANISATION=Test Org
+      - LDAP_DOMAIN=test.local
+      - LDAP_ADMIN_PASSWORD=adminpass
+
+  rdp:
+    image: satishweb/xrdp
+    ports:
+      - "3389:3389"
+    environment:
+      - GUEST_PASS=rdppass
+    # Default user is 'guest', password set via GUEST_PASS
+
+  # ==================== Databases ====================
+
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpass
+      - MYSQL_DATABASE=testdb
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  postgres:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_PASSWORD=postgrespass
+      - POSTGRES_DB=testdb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    ports:
+      - "1433:1433"
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=MssqlPass123!
+
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=mongouser
+      - MONGO_INITDB_ROOT_PASSWORD=mongopass
+
+  redis:
+    image: bitnami/redis:latest
+    ports:
+      - "6379:6379"
+    environment:
+      - REDIS_PASSWORD=redispass
+
+  neo4j:
+    image: neo4j:5
+    ports:
+      - "7687:7687"
+      - "7474:7474"
+    environment:
+      - NEO4J_AUTH=neo4j/neo4jpass
+
+  cassandra:
+    image: cassandra:4
+    ports:
+      - "9042:9042"
+    environment:
+      - CASSANDRA_AUTHENTICATOR=PasswordAuthenticator
+      - CASSANDRA_AUTHORIZER=CassandraAuthorizer
+
+  couchdb:
+    image: couchdb:3
+    ports:
+      - "5984:5984"
+    environment:
+      - COUCHDB_USER=couchuser
+      - COUCHDB_PASSWORD=couchpass
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=elasticpass
+
+  influxdb:
+    image: influxdb:2
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=influxuser
+      - DOCKER_INFLUXDB_INIT_PASSWORD=influxpass
+      - DOCKER_INFLUXDB_INIT_ORG=testorg
+      - DOCKER_INFLUXDB_INIT_BUCKET=testbucket
+
+  # ==================== Communications ====================
+
+  mailserver:
+    image: greenmail/standalone:2.0.0
+    ports:
+      - "3025:3025"   # SMTP
+      - "3110:3110"   # POP3
+      - "3143:3143"   # IMAP
+      - "3465:3465"   # SMTPS
+      - "3993:3993"   # IMAPS
+      - "3995:3995"   # POP3S
+    environment:
+      - GREENMAIL_OPTS=-Dgreenmail.setup.test.all -Dgreenmail.users=testuser:testpass@test.local
+
+  snmp:
+    image: polinux/snmpd:alpine
+    ports:
+      - "161:161/udp"
+    environment:
+      - SNMP_COMMUNITY=public

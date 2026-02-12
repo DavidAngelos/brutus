@@ -1,0 +1,9 @@
+# LDAP Default Credentials
+# Format: username:password (plugin tries simple username first, then constructs DN)
+admin:admin
+admin:password
+administrator:administrator
+cn=admin:admin
+cn=admin:password
+ldapadmin:ldapadmin
+root:root

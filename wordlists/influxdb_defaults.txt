@@ -1,0 +1,7 @@
+# InfluxDB Default Credentials
+# Format: username:password
+admin:admin
+admin:password
+root:root
+influxdb:influxdb
+admin:influxdb

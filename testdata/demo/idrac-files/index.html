@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>iDRAC 9</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: "Roboto", Arial, sans-serif; background: #1a1a1a; color: #fff; min-height: 100vh; }
+        .header { background: #007db8; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; }
+        .logo { display: flex; align-items: center; gap: 15px; }
+        .dell-logo { font-size: 24px; font-weight: 700; letter-spacing: -1px; }
+        .dell-logo span { color: #fff; }
+        .product-name { font-size: 14px; color: rgba(255,255,255,0.9); border-left: 1px solid rgba(255,255,255,0.3); padding-left: 15px; margin-left: 5px; }
+        .user-info { font-size: 13px; color: rgba(255,255,255,0.8); }
+        .nav { background: #2d2d2d; padding: 0; border-bottom: 1px solid #444; }
+        .nav-inner { display: flex; }
+        .nav a { color: #ccc; text-decoration: none; padding: 14px 20px; font-size: 13px; border-bottom: 3px solid transparent; }
+        .nav a:hover { color: #fff; background: #383838; }
+        .nav a.active { color: #fff; border-bottom-color: #007db8; background: #383838; }
+        .content { padding: 24px; max-width: 1200px; }
+        .success-banner { background: #1b5e20; border-left: 4px solid #4caf50; padding: 16px 20px; margin-bottom: 24px; border-radius: 4px; }
+        .success-banner strong { color: #81c784; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; }
+        .card { background: #2d2d2d; border-radius: 4px; overflow: hidden; }
+        .card-header { background: #383838; padding: 14px 18px; font-size: 14px; font-weight: 500; border-bottom: 1px solid #444; display: flex; align-items: center; gap: 10px; }
+        .card-header .icon { width: 20px; height: 20px; background: #007db8; border-radius: 3px; }
+        .card-body { padding: 18px; }
+        .status-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #3a3a3a; font-size: 13px; }
+        .status-row:last-child { border-bottom: none; }
+        .status-label { color: #999; }
+        .status-value { color: #fff; font-weight: 500; }
+        .status-ok { color: #4caf50; }
+        .status-warn { color: #ff9800; }
+        .health-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 10px; }
+        .health-item { background: #383838; padding: 15px; border-radius: 4px; text-align: center; }
+        .health-icon { font-size: 24px; margin-bottom: 8px; }
+        .health-label { font-size: 11px; color: #999; text-transform: uppercase; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">
+            <div class="dell-logo"><span>DELL</span></div>
+            <div class="product-name">Integrated Dell Remote Access Controller 9</div>
+        </div>
+        <div class="user-info">Logged in as: root</div>
+    </div>
+    <div class="nav">
+        <div class="nav-inner">
+            <a href="#" class="active">Dashboard</a>
+            <a href="#">System</a>
+            <a href="#">Storage</a>
+            <a href="#">Configuration</a>
+            <a href="#">Maintenance</a>
+            <a href="#">iDRAC Settings</a>
+        </div>
+    </div>
+    <div class="content">
+        <div class="success-banner">
+            <strong>Authentication Successful!</strong><br>
+            You have logged into Dell iDRAC. This is a demo for Brutus LLM credential guessing with vendor defaults (root/calvin).
+        </div>
+        <div class="grid">
+            <div class="card">
+                <div class="card-header"><div class="icon"></div>System Health</div>
+                <div class="card-body">
+                    <div class="health-grid">
+                        <div class="health-item"><div class="health-icon">✓</div><div class="health-label">Overall</div></div>
+                        <div class="health-item"><div class="health-icon">✓</div><div class="health-label">Battery</div></div>
+                        <div class="health-item"><div class="health-icon">✓</div><div class="health-label">Fans</div></div>
+                        <div class="health-item"><div class="health-icon">✓</div><div class="health-label">Temps</div></div>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header"><div class="icon"></div>Server Information</div>
+                <div class="card-body">
+                    <div class="status-row"><span class="status-label">Model</span><span class="status-value">PowerEdge R740</span></div>
+                    <div class="status-row"><span class="status-label">Service Tag</span><span class="status-value">ABC1234</span></div>
+                    <div class="status-row"><span class="status-label">BIOS Version</span><span class="status-value">2.17.1</span></div>
+                    <div class="status-row"><span class="status-label">iDRAC Version</span><span class="status-value">6.10.00.00</span></div>
+                    <div class="status-row"><span class="status-label">Power State</span><span class="status-value status-ok">ON</span></div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header"><div class="icon"></div>Network</div>
+                <div class="card-body">
+                    <div class="status-row"><span class="status-label">iDRAC IP</span><span class="status-value">10.0.0.50</span></div>
+                    <div class="status-row"><span class="status-label">iDRAC MAC</span><span class="status-value">F4:8E:38:12:34:56</span></div>
+                    <div class="status-row"><span class="status-label">DNS Name</span><span class="status-value">idrac-ABC1234</span></div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header"><div class="icon"></div>Recent Alerts</div>
+                <div class="card-body">
+                    <div class="status-row"><span class="status-label">Critical</span><span class="status-value status-ok">0</span></div>
+                    <div class="status-row"><span class="status-label">Warning</span><span class="status-value status-ok">0</span></div>
+                    <div class="status-row"><span class="status-label">Informational</span><span class="status-value">3</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

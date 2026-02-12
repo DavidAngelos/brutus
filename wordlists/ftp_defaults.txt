@@ -1,0 +1,9 @@
+# FTP Default Credentials
+# Format: username:password
+anonymous:
+anonymous:anonymous
+ftp:ftp
+admin:admin
+root:root
+user:user
+ftpuser:ftpuser

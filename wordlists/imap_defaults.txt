@@ -1,0 +1,9 @@
+# IMAP Default Credentials
+# Format: username:password (often email@domain format)
+admin@localhost:admin
+admin@localhost:password
+user@localhost:password
+test@localhost:test
+postmaster@localhost:password
+root@localhost:root
+webmaster@localhost:password

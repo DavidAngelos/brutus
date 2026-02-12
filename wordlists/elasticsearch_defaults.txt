@@ -1,0 +1,7 @@
+# Elasticsearch Default Credentials
+# Format: username:password
+elastic:elastic
+elastic:changeme
+elastic:password
+admin:admin
+elasticsearch:elasticsearch

@@ -1,0 +1,10 @@
+# SSH Default Credentials
+# Format: username:password
+root:toor
+root:root
+root:password
+root:alpine
+ubuntu:ubuntu
+pi:raspberry
+admin:admin
+vagrant:vagrant

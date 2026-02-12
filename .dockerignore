@@ -1,0 +1,34 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Build artifacts
+brutus
+brutus-*
+*.exe
+*.tar.gz
+*.zip
+
+# Test files
+coverage.out
+*.test
+
+# Documentation (keep README.md)
+*.md
+!README.md
+
+# Examples (not needed in container)
+examples/
+
+# GitHub workflows
+.github/
+
+# OS files
+.DS_Store
+Thumbs.db

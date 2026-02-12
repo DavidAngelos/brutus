@@ -1,0 +1,263 @@
+// Copyright 2026 Praetorian Security, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package brutus
+
+import (
+	"context"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+)
+
+// TestRateLimitApplied tests that rate limiting is applied when RateLimit > 0
+func TestRateLimitApplied(t *testing.T) {
+	// Register a test plugin that tracks call times
+	var callCount atomic.Int32
+	var callTimes []time.Time
+	var mu sync.Mutex
+
+	Register("test-rate", func() Plugin {
+		return &testRateLimitPlugin{
+			callCount: &callCount,
+			callTimes: &callTimes,
+			mu:        &mu,
+		}
+	})
+	defer ResetPlugins()
+
+	config := &Config{
+		Target:    "test:1234",
+		Protocol:  "test-rate",
+		Usernames: []string{"user1", "user2", "user3", "user4"},
+		Passwords: []string{"pass1", "pass2"},
+		Threads:   2,
+		Timeout:   time.Second,
+		RateLimit: 10.0, // 10 requests per second
+		Jitter:    0,
+	}
+
+	start := time.Now()
+	results, err := Brute(config)
+	duration := time.Since(start)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 8, len(results)) // 4 users x 2 passwords
+
+	// With 10 rps rate limit and 8 requests, should take at least 700ms
+	// (0ms for first request, then 100ms intervals for remaining 7 requests)
+	assert.GreaterOrEqual(t, duration.Milliseconds(), int64(700),
+		"Rate limiting should enforce minimum delay between requests")
+}
+
+// TestRateLimitDisabled tests that no rate limiting is applied when RateLimit = 0
+func TestRateLimitDisabled(t *testing.T) {
+	var callCount atomic.Int32
+
+	Register("test-no-rate", func() Plugin {
+		return &testRateLimitPlugin{
+			callCount: &callCount,
+		}
+	})
+	defer ResetPlugins()
+
+	config := &Config{
+		Target:    "test:1234",
+		Protocol:  "test-no-rate",
+		Usernames: []string{"user1", "user2", "user3", "user4"},
+		Passwords: []string{"pass1", "pass2"},
+		Threads:   4,
+		Timeout:   time.Second,
+		RateLimit: 0, // No rate limiting
+		Jitter:    0,
+	}
+
+	start := time.Now()
+	results, err := Brute(config)
+	duration := time.Since(start)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 8, len(results)) // 4 users x 2 passwords
+
+	// Without rate limiting, all requests should complete quickly
+	// Allow up to 100ms for execution overhead
+	assert.Less(t, duration.Milliseconds(), int64(100),
+		"No rate limiting should allow fast parallel execution")
+}
+
+// TestJitterApplied tests that jitter adds randomness to rate limiting
+func TestJitterApplied(t *testing.T) {
+	var callTimes []time.Time
+	var mu sync.Mutex
+
+	Register("test-jitter", func() Plugin {
+		return &testRateLimitPlugin{
+			callTimes: &callTimes,
+			mu:        &mu,
+		}
+	})
+	defer ResetPlugins()
+
+	config := &Config{
+		Target:    "test:1234",
+		Protocol:  "test-jitter",
+		Usernames: []string{"user1", "user2", "user3", "user4"},
+		Passwords: []string{"pass1", "pass2"},
+		Threads:   1,
+		Timeout:   time.Second,
+		RateLimit: 10.0,                  // 10 requests per second (100ms between requests)
+		Jitter:    50 * time.Millisecond, // Up to 50ms jitter
+	}
+
+	_, err := Brute(config)
+	assert.NoError(t, err)
+
+	// With jitter, intervals between requests should vary
+	// Check that not all intervals are exactly 100ms
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(callTimes) < 2 {
+		t.Skip("Not enough call times to check jitter")
+	}
+
+	intervals := make([]int64, 0, len(callTimes)-1)
+	for i := 1; i < len(callTimes); i++ {
+		interval := callTimes[i].Sub(callTimes[i-1]).Milliseconds()
+		intervals = append(intervals, interval)
+	}
+
+	// At least some intervals should differ (jitter adds randomness)
+	allSame := true
+	firstInterval := intervals[0]
+	for _, interval := range intervals[1:] {
+		if interval != firstInterval {
+			allSame = false
+			break
+		}
+	}
+
+	assert.False(t, allSame, "Jitter should create varying intervals between requests")
+}
+
+// testRateLimitPlugin is a test plugin that records call times
+type testRateLimitPlugin struct {
+	callCount *atomic.Int32
+	callTimes *[]time.Time
+	mu        *sync.Mutex
+}
+
+func (p *testRateLimitPlugin) Name() string {
+	return "test-rate-limit"
+}
+
+func (p *testRateLimitPlugin) Test(ctx context.Context, target, username, password string, timeout time.Duration) *Result {
+	if p.callCount != nil {
+		p.callCount.Add(1)
+	}
+
+	if p.callTimes != nil && p.mu != nil {
+		p.mu.Lock()
+		*p.callTimes = append(*p.callTimes, time.Now())
+		p.mu.Unlock()
+	}
+
+	// Simulate quick authentication check
+	return &Result{
+		Protocol: "test-rate-limit",
+		Target:   target,
+		Username: username,
+		Password: password,
+		Success:  false,
+		Duration: time.Millisecond,
+	}
+}
+
+// TestJitterRespectsContextCancellation tests that jitter sleep respects context cancellation.
+// When StopOnSuccess is enabled and a valid credential is found, goroutines sleeping
+// in jitter should wake up immediately when context is canceled, not continue sleeping
+// for the full jitter duration.
+func TestJitterRespectsContextCancellation(t *testing.T) {
+	var firstCall atomic.Bool
+
+	Register("test-jitter-cancel", func() Plugin {
+		return &testJitterCancelPlugin{
+			firstCall: &firstCall,
+		}
+	})
+	defer ResetPlugins()
+
+	config := &Config{
+		Target:        "test:1234",
+		Protocol:      "test-jitter-cancel",
+		Usernames:     []string{"user1", "user2", "user3", "user4"},
+		Passwords:     []string{"pass1", "pass2", "pass3"},
+		Threads:       4, // Multiple threads to ensure concurrent execution
+		Timeout:       time.Second,
+		StopOnSuccess: true,            // Stop after first success
+		RateLimit:     100.0,           // Enable rate limiting to trigger jitter code path
+		Jitter:        5 * time.Second, // Long jitter to make bug obvious
+	}
+
+	start := time.Now()
+	results, err := Brute(config)
+	elapsed := time.Since(start)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, results)
+
+	// Find the successful result
+	foundSuccess := false
+	for _, r := range results {
+		if r.Success {
+			foundSuccess = true
+			break
+		}
+	}
+	assert.True(t, foundSuccess, "Expected to find a successful authentication")
+
+	// Without the fix, goroutines sleep for full jitter (5s) even after context cancel.
+	// With the fix, they exit immediately when context is canceled.
+	// Total execution should be < 1 second (not 5+ seconds).
+	// Allow some margin for test execution overhead.
+	assert.Less(t, elapsed, 2*time.Second,
+		"Workers should exit quickly on context cancellation, not sleep full jitter duration (5s). Actual: %v", elapsed)
+}
+
+// testJitterCancelPlugin is a test plugin where the first credential succeeds
+type testJitterCancelPlugin struct {
+	firstCall *atomic.Bool
+}
+
+func (p *testJitterCancelPlugin) Name() string {
+	return "test-jitter-cancel"
+}
+
+func (p *testJitterCancelPlugin) Test(ctx context.Context, target, username, password string, timeout time.Duration) *Result {
+	// First call succeeds, all others fail
+	// This triggers StopOnSuccess and context cancellation
+	isFirst := p.firstCall.CompareAndSwap(false, true)
+
+	return &Result{
+		Protocol: "test-jitter-cancel",
+		Target:   target,
+		Username: username,
+		Password: password,
+		Success:  isFirst, // First call succeeds
+		Duration: 10 * time.Millisecond,
+	}
+}

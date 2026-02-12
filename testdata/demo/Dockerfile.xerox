@@ -1,0 +1,20 @@
+# Xerox WorkCentre Printer Mock Server
+# Demonstrates Brutus AI Browser Plugin capability
+# Default credentials: admin/1111 (common Xerox default)
+
+FROM golang:1.22-alpine AS builder
+
+WORKDIR /build
+COPY xerox-server/main.go .
+
+# Initialize module and build
+RUN go mod init xerox-mock && \
+    CGO_ENABLED=0 go build -o xerox-server main.go
+
+FROM alpine:3.19
+
+WORKDIR /app
+COPY --from=builder /build/xerox-server /app/xerox-server
+
+EXPOSE 80
+CMD ["/app/xerox-server"]

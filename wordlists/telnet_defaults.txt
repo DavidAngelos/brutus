@@ -1,0 +1,11 @@
+# Telnet Default Credentials
+# Format: username:password
+admin:admin
+root:root
+administrator:administrator
+admin:password
+root:password
+admin:1234
+admin:
+ubnt:ubnt
+cisco:cisco

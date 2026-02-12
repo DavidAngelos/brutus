@@ -1,0 +1,17 @@
+# RDP Default Credentials
+# Format: username:password
+# Windows systems with weak Administrator passwords or guest accounts
+Administrator:
+Administrator:Administrator
+Administrator:password
+Administrator:Password1
+Administrator:admin
+Administrator:P@ssw0rd
+Administrator:Welcome1
+Administrator:123456
+Guest:
+Guest:guest
+admin:admin
+admin:password
+user:user
+user:password

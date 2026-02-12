@@ -1,0 +1,103 @@
+# Docker Compose for running mock embedded device login pages
+# Used for integration testing the browser plugin
+#
+# Usage:
+#   docker-compose up -d      # Start all mock services
+#   docker-compose down       # Stop all mock services
+#
+# Service Ports:
+#   - Router (TP-Link):     http://localhost:8081 (admin/admin)
+#   - Camera (Hikvision):   http://localhost:8082 (admin/12345)
+#   - Printer (HP):         http://localhost:8083 (admin/)
+#   - NAS (Synology):       http://localhost:8084 (admin/synology)
+#   - Generic Admin:        http://localhost:8085 (admin/password)
+
+services:
+  mock-router:
+    build:
+      context: ./mocks
+      dockerfile: Dockerfile
+      args:
+        DEVICE: router
+    container_name: brutus-mock-router
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    networks:
+      - brutus-test
+
+  mock-camera:
+    build:
+      context: ./mocks
+      dockerfile: Dockerfile
+      args:
+        DEVICE: camera
+    container_name: brutus-mock-camera
+    ports:
+      - "8082:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    networks:
+      - brutus-test
+
+  mock-printer:
+    build:
+      context: ./mocks
+      dockerfile: Dockerfile
+      args:
+        DEVICE: printer
+    container_name: brutus-mock-printer
+    ports:
+      - "8083:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    networks:
+      - brutus-test
+
+  mock-nas:
+    build:
+      context: ./mocks
+      dockerfile: Dockerfile
+      args:
+        DEVICE: nas
+    container_name: brutus-mock-nas
+    ports:
+      - "8084:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    networks:
+      - brutus-test
+
+  mock-generic:
+    build:
+      context: ./mocks
+      dockerfile: Dockerfile
+      args:
+        DEVICE: generic
+    container_name: brutus-mock-generic
+    ports:
+      - "8085:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    networks:
+      - brutus-test
+
+networks:
+  brutus-test:
+    driver: bridge

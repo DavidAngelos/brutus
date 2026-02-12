@@ -1,0 +1,8 @@
+# CouchDB Default Credentials
+# Format: username:password
+admin:admin
+admin:password
+administrator:administrator
+root:root
+couchdb:couchdb
+admin:couchdb

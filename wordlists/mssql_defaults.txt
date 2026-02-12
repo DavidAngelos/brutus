@@ -1,0 +1,9 @@
+# MSSQL (Microsoft SQL Server) Default Credentials
+# Format: username:password
+sa:
+sa:sa
+sa:password
+sa:Password1
+sa:admin
+administrator:administrator
+admin:admin

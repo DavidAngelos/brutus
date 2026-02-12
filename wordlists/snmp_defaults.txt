@@ -1,0 +1,23 @@
+# SNMP Default Community Strings
+# Format: One community string per line
+# Note: For SNMP v1/v2c only (community string authentication)
+public
+private
+community
+snmp
+default
+admin
+manager
+root
+cisco
+cable-docsis
+apc
+hp_admin
+netman
+read
+write
+monitor
+test
+guest
+password
+secret

@@ -1,0 +1,9 @@
+# SMTP Default Credentials
+# Format: username:password (often email@domain format)
+postmaster:password
+postmaster:admin
+admin:admin
+admin@localhost:password
+root:root
+user@localhost:password
+test@localhost:test

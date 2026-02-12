@@ -1,0 +1,33 @@
+# Vulnerable SSH server for Brutus demo
+# This container accepts authentication with the included private key
+#
+# WARNING: This is intentionally insecure for demonstration purposes only.
+# DO NOT use in production or expose to untrusted networks.
+
+FROM alpine:3.19
+
+RUN apk add --no-cache openssh-server
+
+# Create vagrant user (matches the embedded badkeys username)
+RUN adduser -D -s /bin/sh vagrant && \
+    echo "vagrant:vagrant" | chpasswd
+
+# Setup SSH
+RUN ssh-keygen -A && \
+    mkdir -p /home/vagrant/.ssh && \
+    chmod 700 /home/vagrant/.ssh
+
+# Copy the Vagrant insecure public key (a well-known vulnerable key)
+COPY vulnerable_key.pub /home/vagrant/.ssh/authorized_keys
+RUN chmod 600 /home/vagrant/.ssh/authorized_keys && \
+    chown -R vagrant:vagrant /home/vagrant/.ssh
+
+# Allow password and key authentication
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config && \
+    echo "AllowUsers vagrant" >> /etc/ssh/sshd_config
+
+EXPOSE 22
+
+CMD ["/usr/sbin/sshd", "-D", "-e"]

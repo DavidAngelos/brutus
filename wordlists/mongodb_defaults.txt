@@ -1,0 +1,9 @@
+# MongoDB Default Credentials
+# Format: username:password
+admin:admin
+admin:password
+root:root
+root:password
+mongodb:mongodb
+user:user
+dbadmin:dbadmin

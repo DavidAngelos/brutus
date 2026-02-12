@@ -1,0 +1,119 @@
+# Brutus Demo Environment
+# Spins up vulnerable services for demonstrating Brutus capabilities
+#
+# Usage:
+#   make demo-up     # Start demo environment
+#   make demo        # Run full pipeline demo
+#   make demo-down   # Tear down environment
+#
+# Services (all use REAL default credentials that Brutus will find):
+#   - SSH (port 2222): vagrant/vagrant OR Vagrant insecure key (badkeys)
+#   - MySQL (port 3306): root/root (common MySQL default)
+#   - Redis (port 6379): password "redis" (common Redis default)
+#   - FTP (port 21): ftpuser/ftpuser (vsFTPd default)
+#   - iDRAC (port 8080): root/calvin - HTTP Basic Auth for LLM demo
+#   - Xerox (port 8081): admin/1111 - Form login for Browser demo
+
+services:
+  # SSH server with vulnerable/leaked private key
+  ssh-vulnerable:
+    build:
+      context: .
+      dockerfile: Dockerfile.ssh
+    container_name: brutus-demo-ssh
+    ports:
+      - "2222:22"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - brutus-demo
+
+  # MySQL with default credentials (root/root)
+  mysql-vulnerable:
+    image: mysql:8.0
+    container_name: brutus-demo-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=demo
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - brutus-demo
+
+  # Redis with default password (redis)
+  redis-vulnerable:
+    image: bitnami/redis:latest
+    container_name: brutus-demo-redis
+    ports:
+      - "6379:6379"
+    environment:
+      - REDIS_PASSWORD=redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - brutus-demo
+
+  # FTP with default credentials (ftpuser/ftpuser)
+  ftp-vulnerable:
+    image: fauria/vsftpd
+    container_name: brutus-demo-ftp
+    ports:
+      - "21:21"
+      - "21100-21110:21100-21110"
+    environment:
+      - FTP_USER=ftpuser
+      - FTP_PASS=ftpuser
+      - PASV_ADDRESS=127.0.0.1
+      - PASV_MIN_PORT=21100
+      - PASV_MAX_PORT=21110
+    networks:
+      - brutus-demo
+
+  # Dell iDRAC mock - HTTP Basic Auth (LLM demo)
+  # Default credentials: root/calvin
+  idrac-mock:
+    build:
+      context: .
+      dockerfile: Dockerfile.idrac
+    container_name: brutus-demo-idrac
+    ports:
+      - "8080:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - brutus-demo
+
+  # Xerox WorkCentre mock - Form login (Browser demo)
+  # Default credentials: admin/1111
+  xerox-mock:
+    build:
+      context: .
+      dockerfile: Dockerfile.xerox
+    container_name: brutus-demo-xerox
+    ports:
+      - "8081:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - brutus-demo
+
+networks:
+  brutus-demo:
+    driver: bridge

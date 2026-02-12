@@ -1,0 +1,10 @@
+# MySQL Default Credentials
+# Format: username:password
+root:
+root:root
+root:password
+root:toor
+root:mysql
+root:admin
+mysql:mysql
+admin:admin

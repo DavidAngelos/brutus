@@ -1,0 +1,20 @@
+# Dell iDRAC Mock Server
+# Demonstrates Brutus LLM Basic Auth Guessing capability
+# Default credentials: root/calvin (classic iDRAC default)
+
+FROM nginx:alpine
+
+# Install apache2-utils for htpasswd
+RUN apk add --no-cache apache2-utils
+
+# Create htpasswd file with root:calvin (the infamous iDRAC default)
+RUN htpasswd -bc /etc/nginx/.htpasswd root calvin
+
+# Copy iDRAC-style dashboard HTML
+COPY idrac-files/index.html /usr/share/nginx/html/index.html
+
+# Copy nginx configuration with Basic Auth
+COPY idrac-files/default.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]

@@ -1,0 +1,7 @@
+# Neo4j Default Credentials
+# Format: username:password
+neo4j:neo4j
+neo4j:password
+neo4j:admin
+admin:admin
+neo4j:neo4j123
