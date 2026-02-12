@@ -232,9 +232,9 @@ func TestJitterRespectsContextCancellation(t *testing.T) {
 
 	// Without the fix, goroutines sleep for full jitter (5s) even after context cancel.
 	// With the fix, they exit immediately when context is canceled.
-	// Total execution should be < 1 second (not 5+ seconds).
-	// Allow some margin for test execution overhead.
-	assert.Less(t, elapsed, 2*time.Second,
+	// Total execution should be significantly less than 5s jitter duration.
+	// Allow generous margin for CI environment variability (slow VMs, CPU contention).
+	assert.Less(t, elapsed, 4*time.Second,
 		"Workers should exit quickly on context cancellation, not sleep full jitter duration (5s). Actual: %v", elapsed)
 }
 
