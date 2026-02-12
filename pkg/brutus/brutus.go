@@ -61,6 +61,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/praetorian-inc/brutus/pkg/badkeys"
+
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 )
@@ -110,7 +112,8 @@ type Config struct {
 	Passwords     []string      // passwords to test (Cartesian product with Usernames)
 	Keys          [][]byte      // SSH private keys to test (Cartesian product with Usernames)
 	Credentials   []Credential  // pre-paired credentials (no Cartesian product)
-	UseDefaults   bool          // protocol-specific defaults (Phase 1B)
+	UseDefaults   bool          // load protocol-specific default credentials from embedded wordlists
+	NoBadkeys     bool          // skip embedded bad SSH keys when UseDefaults is true
 	Timeout       time.Duration // per-credential timeout (default: 10s)
 	Threads       int           // concurrent workers (default: 10)
 	StopOnSuccess bool          // stop after first valid cred (default: true)
@@ -373,6 +376,33 @@ func IsStandardBanner(protocol, banner string) bool {
 // Configuration Validation
 // =============================================================================
 
+// applyDefaults populates protocol-specific default credentials from embedded
+// wordlists when UseDefaults is true and no credentials have been provided.
+// Existing credentials are never overwritten.
+func (c *Config) applyDefaults() {
+	if !c.UseDefaults {
+		return
+	}
+
+	hasCreds := len(c.Credentials) > 0
+	hasPasswords := len(c.Passwords) > 0
+	hasKeys := len(c.Keys) > 0
+
+	// Load SSH badkeys as paired credentials when no keys/creds were provided
+	if c.Protocol == "ssh" && !c.NoBadkeys && !hasCreds && !hasKeys {
+		for _, k := range badkeys.GetSSHCredentials() {
+			c.Credentials = append(c.Credentials, Credential{Username: k.Username, Key: k.Key})
+		}
+	}
+
+	// Load wordlist defaults when no user-supplied credentials were provided
+	if !hasCreds && !hasPasswords && !hasKeys {
+		if defaults := DefaultCredentials(c.Protocol); len(defaults) > 0 {
+			c.Credentials = append(c.Credentials, defaults...)
+		}
+	}
+}
+
 // validate checks the configuration and applies defaults.
 func (c *Config) validate() error {
 	if c.Target == "" {
@@ -381,6 +411,9 @@ func (c *Config) validate() error {
 	if c.Protocol == "" {
 		return errors.New("protocol is required")
 	}
+
+	c.applyDefaults()
+
 	// Need either: paired Credentials OR (Usernames + Passwords/Keys)
 	hasPairedCreds := len(c.Credentials) > 0
 	hasUnpairedCreds := len(c.Usernames) > 0 && (len(c.Passwords) > 0 || len(c.Keys) > 0)
