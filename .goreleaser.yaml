@@ -89,8 +89,10 @@ changelog:
     - title: Other
       order: 999
 
-# Docker builds - using legacy format (dockers_v2 is not yet stable)
+# Docker builds - disabled until GHCR permissions are configured
+# To re-enable, remove 'skip: true' from dockers and docker_manifests sections
 dockers:
+  skip: true
   - id: brutus-amd64
     image_templates:
       - "ghcr.io/praetorian-inc/brutus:{{ .Tag }}-amd64"
@@ -126,6 +128,7 @@ dockers:
     dockerfile: Dockerfile.goreleaser
 
 docker_manifests:
+  skip: true
   - name_template: "ghcr.io/praetorian-inc/brutus:{{ .Tag }}"
     image_templates:
       - "ghcr.io/praetorian-inc/brutus:{{ .Tag }}-amd64"
@@ -165,9 +168,6 @@ release:
     tar -xzf brutus-darwin-arm64.tar.gz
     chmod +x brutus
     sudo mv brutus /usr/local/bin/
-
-    # Docker
-    docker pull ghcr.io/praetorian-inc/brutus:{{ .Tag }}
     ```
 
     ### Verify Checksums
