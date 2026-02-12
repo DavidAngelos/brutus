@@ -1,4 +1,4 @@
-<img width="2752" height="1536" alt="brutus" src="https://github.com/user-attachments/assets/f2f91f6a-e416-477f-801c-1c701e2147ac" />
+<img width="2752" height="1536" alt="Brutus - Social" src="https://github.com/user-attachments/assets/d190be41-570c-4f29-87aa-50b9bd4cd6c3" />
 <h1 align="center">Brutus</h1>
 
 <p align="center">
