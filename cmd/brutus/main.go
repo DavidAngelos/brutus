@@ -560,7 +560,7 @@ Fingerprintx Integration:
 
 Supported Protocols:
   Network:      ssh, ftp, telnet, vnc
-  Enterprise:   smb, ldap
+  Enterprise:   smb, ldap, winrm
   Databases:    mysql, postgresql, mssql, mongodb, redis, neo4j, cassandra,
                 couchdb, elasticsearch, influxdb
   NoSQL:        mongodb, redis, neo4j, cassandra, couchdb, elasticsearch, influxdb
