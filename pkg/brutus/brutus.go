@@ -62,6 +62,7 @@ import (
 	"time"
 
 	"github.com/praetorian-inc/brutus/pkg/badkeys"
+
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 )
