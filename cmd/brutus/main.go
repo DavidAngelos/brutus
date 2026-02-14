@@ -546,65 +546,6 @@ func runSingleTarget(target, protocol string, base *baseConfigOptions) ([]brutus
 	return results, hasSuccess
 }
 
-func loadPasswords(inline, file string, inlineFlagSet bool) []string {
-	var passwords []string
-
-	// Load from inline flag
-	if inlineFlagSet {
-		passwords = append(passwords, strings.Split(inline, ",")...)
-	}
-
-	// Load from file
-	if file != "" {
-		f, err := os.Open(file)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error opening password file: %v\n", err)
-			os.Exit(1)
-		}
-
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			line := scanner.Text()
-			trimmed := strings.TrimSpace(line)
-			// Skip comments
-			if strings.HasPrefix(trimmed, "#") {
-				continue
-			}
-			// Support <EMPTY> marker for empty passwords
-			if trimmed == "<EMPTY>" {
-				passwords = append(passwords, "")
-				continue
-			}
-			// Include all non-comment lines (empty lines = empty passwords)
-			passwords = append(passwords, trimmed)
-		}
-
-		scanErr := scanner.Err()
-		f.Close()
-
-		if scanErr != nil {
-			fmt.Fprintf(os.Stderr, "Error reading password file: %v\n", scanErr)
-			os.Exit(1)
-		}
-	}
-
-	return passwords
-}
-
-func loadKey(keyFile string) [][]byte {
-	if keyFile == "" {
-		return nil
-	}
-
-	key, err := os.ReadFile(keyFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading key file %s: %v\n", keyFile, err)
-		os.Exit(1)
-	}
-
-	return [][]byte{key}
-}
-
 func outputHuman(results []brutus.Result, useColor, quiet bool) {
 	validCount := 0
 	invalidCount := 0
