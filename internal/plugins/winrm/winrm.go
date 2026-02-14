@@ -28,6 +28,13 @@ import (
 	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
 
+// winrmAuthIndicators lists error strings that indicate authentication failure
+// (invalid credentials) rather than connection issues.
+var winrmAuthIndicators = []string{
+	"http error 401",
+	"http response error: 401",
+}
+
 func init() {
 	brutus.Register("winrm", func() brutus.Plugin {
 		return &Plugin{UseHTTPS: false}
@@ -213,16 +220,7 @@ func classifyError(err error) error {
 		return errAuthSuccess
 	}
 
-	errStr := strings.ToLower(err.Error())
-
-	// HTTP 401 after NTLM handshake means invalid credentials
-	if strings.Contains(errStr, "http error 401") ||
-		strings.Contains(errStr, "http response error: 401") {
-		return nil
-	}
-
-	// All other errors are connection problems
-	return fmt.Errorf("connection error: %w", err)
+	return brutus.ClassifyAuthError(err, winrmAuthIndicators)
 }
 
 // errAuthSuccess is a sentinel indicating NTLM auth succeeded despite a SOAP-level error.

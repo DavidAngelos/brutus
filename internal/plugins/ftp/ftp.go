@@ -25,6 +25,12 @@ import (
 	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
 
+// ftpAuthIndicators lists error strings that indicate authentication failure
+// (wrong credentials) rather than connection issues.
+var ftpAuthIndicators = []string{
+	"530", // FTP response code for authentication failure
+}
+
 func init() {
 	brutus.Register("ftp", func() brutus.Plugin {
 		return &Plugin{}
@@ -159,24 +165,7 @@ func classifyError(err error) error {
 }
 
 // classifyAuthError classifies FTP authentication errors.
-//
-// Auth failure indicators (return nil):
-// - "530" (Login incorrect / Authentication failed)
-//
-// All other errors are connection problems (return wrapped error).
+// Delegates to the shared brutus.ClassifyAuthError helper.
 func classifyAuthError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	errStr := err.Error()
-
-	// Check for FTP 530 response code (authentication failure)
-	if strings.Contains(errStr, "530") {
-		// This is an authentication failure, not a connection error
-		return nil
-	}
-
-	// All other errors are connection problems
-	return fmt.Errorf("connection error: %w", err)
+	return brutus.ClassifyAuthError(err, ftpAuthIndicators)
 }

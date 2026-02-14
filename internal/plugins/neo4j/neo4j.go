@@ -18,7 +18,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -26,6 +25,13 @@ import (
 
 	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
+
+var neo4jAuthIndicators = []string{
+	"authentication failure",
+	"invalid credentials",
+	"authentication failed",
+	"auth",
+}
 
 func init() {
 	brutus.Register("neo4j", func() brutus.Plugin {
@@ -97,33 +103,8 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 
 // classifyError classifies Neo4j errors.
 //
-// Auth failure indicators (return nil):
-// - "authentication failure"
-// - "invalid credentials"
-//
-// All other errors are connection problems (return wrapped error).
+// Uses shared brutus.ClassifyAuthError with Neo4j auth indicators
+// to distinguish authentication failures from connection errors.
 func classifyError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	errStr := strings.ToLower(err.Error())
-
-	// Check for authentication failure indicators
-	authFailures := []string{
-		"authentication failure",
-		"invalid credentials",
-		"authentication failed",
-		"auth",
-	}
-
-	for _, indicator := range authFailures {
-		if strings.Contains(errStr, indicator) {
-			// This is an authentication failure, not a connection error
-			return nil
-		}
-	}
-
-	// All other errors are connection problems
-	return fmt.Errorf("connection error: %w", err)
+	return brutus.ClassifyAuthError(err, neo4jAuthIndicators)
 }
