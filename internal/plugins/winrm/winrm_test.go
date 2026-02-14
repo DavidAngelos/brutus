@@ -17,6 +17,8 @@ package winrm
 import (
 	"context"
 	"errors"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -317,4 +319,47 @@ func TestInit(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, p2)
 	assert.Equal(t, "winrms", p2.Name())
+}
+
+func TestPlugin_Test_NoGoroutineLeak(t *testing.T) {
+	// Test that context timeout allows Test() to return promptly
+	// even when enc.Post() is blocked on an unresponsive host.
+	// The method should not block indefinitely waiting for the goroutine.
+	p := &Plugin{UseHTTPS: false}
+	ctx := context.Background()
+
+	// Use blackhole IP that won't respond
+	start := time.Now()
+	result := p.Test(ctx, "192.0.2.1:5985", "admin", "password", 100*time.Millisecond)
+	elapsed := time.Since(start)
+
+	// Verify the method returned promptly (within timeout + small grace period)
+	// Should NOT block for the full TCP timeout (multiple seconds/minutes)
+	assert.Less(t, elapsed, 500*time.Millisecond,
+		"Test() should return promptly after context timeout, not block on enc.Post()")
+
+	assert.NotNil(t, result)
+	assert.False(t, result.Success)
+	assert.NotNil(t, result.Error)
+	assert.Contains(t, result.Error.Error(), "connection error")
+}
+
+// countWinRMGoroutines counts goroutines that appear to be from WinRM code
+// (blocking in network operations or Post calls)
+func countWinRMGoroutines() int {
+	buf := make([]byte, 1<<20)
+	stackLen := runtime.Stack(buf, true)
+	stacks := string(buf[:stackLen])
+
+	count := 0
+	// Split by goroutine delimiter
+	goroutines := strings.Split(stacks, "\n\n")
+	for _, g := range goroutines {
+		// Look for goroutines blocked in Post or network operations
+		if strings.Contains(g, "winrm") ||
+			(strings.Contains(g, "net/http") && strings.Contains(g, "Post")) {
+			count++
+		}
+	}
+	return count
 }

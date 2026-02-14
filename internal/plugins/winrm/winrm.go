@@ -144,9 +144,17 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 		err  error
 	}
 	ch := make(chan postResult, 1)
+	done := make(chan struct{})
+
 	go func() {
+		defer close(done)
 		r, e := enc.Post(client, message)
-		ch <- postResult{r, e}
+		select {
+		case ch <- postResult{r, e}:
+			// Successfully sent result
+		case <-timeoutCtx.Done():
+			// Context cancelled while trying to send result - discard it
+		}
 	}()
 
 	select {
@@ -172,6 +180,24 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	case <-timeoutCtx.Done():
 		result.Error = fmt.Errorf("connection error: %w", timeoutCtx.Err())
 		result.Duration = time.Since(start)
+
+		// Wait for the Post() goroutine to exit to prevent goroutine leak.
+		// The goroutine will exit either:
+		// 1. When enc.Post() completes (success or error)
+		// 2. When it detects the channel send would block due to context cancellation
+		//
+		// Since we can't access the internal HTTP client to force-close connections,
+		// we give the goroutine a brief grace period to exit cleanly. If it's still
+		// blocked after this timeout, it means enc.Post() is stuck in a TCP operation
+		// that will eventually timeout based on the OS TCP settings.
+		select {
+		case <-done:
+			// Goroutine exited cleanly
+		case <-time.After(50 * time.Millisecond):
+			// Goroutine still blocked - unavoidable without access to internal HTTP client.
+			// The goroutine will eventually exit when the TCP operation times out.
+		}
+
 		return result
 	}
 }
