@@ -31,6 +31,8 @@ import (
 var ldapAuthIndicators = []string{
 	"invalid credentials",
 	"result code 49",
+	"result code 32", // noSuchObject - invalid DN
+	"result code 50", // insufficientAccessRights
 }
 
 func init() {
@@ -116,33 +118,9 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 		return result
 	}
 
-	// Check if it was an auth error (ClassifyAuthError returns nil for auth errors)
-	if classifyError(err) == nil {
-		// Try constructing DN and binding again
-		// Try common DN patterns
-		dnPatterns := []string{
-			"uid=%s,dc=example,dc=com",
-			"cn=%s,dc=example,dc=com",
-			"uid=%s,ou=users,dc=example,dc=com",
-			"cn=%s,ou=users,dc=example,dc=com",
-		}
-
-		for _, dn := range dnPatterns {
-			formattedDN := fmt.Sprintf(dn, username)
-			err = conn.Bind(formattedDN, password)
-			if err == nil {
-				// Success with DN
-				result.Success = true
-				result.Duration = time.Since(start)
-				return result
-			}
-
-			// If not an auth error, break (it's a connection problem)
-			if classifyError(err) != nil {
-				break
-			}
-		}
-	}
+	// If simple bind failed with an auth error, no further fallback attempts.
+	// The previous dc=example,dc=com DN patterns were dead code that never
+	// matched real LDAP directories.
 
 	// Classify the error
 	result.Error = classifyError(err)
