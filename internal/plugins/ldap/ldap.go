@@ -79,9 +79,23 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	}
 
 	// Connect to LDAP server with timeout
-	// Use InsecureSkipVerify for LDAPS to allow self-signed certs
+	// Read TLS mode from context
+	tlsMode := brutus.TLSModeFromContext(ctx)
+
+	// Configure TLS based on mode
+	// Note: For LDAP, even "disable" needs TLS config for LDAPS (port 636)
 	dialer := &net.Dialer{Timeout: timeout}
-	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	var tlsConfig *tls.Config
+	switch tlsMode {
+	case "verify":
+		tlsConfig = &tls.Config{
+			InsecureSkipVerify: false,
+		}
+	default: // "skip-verify" or "disable" - both allow self-signed for LDAPS
+		tlsConfig = &tls.Config{
+			InsecureSkipVerify: true,
+		}
+	}
 	conn, err := ldap.DialURL(ldapURL, ldap.DialWithDialer(dialer), ldap.DialWithTLSConfig(tlsConfig))
 	if err != nil {
 		result.Error = classifyError(err)
