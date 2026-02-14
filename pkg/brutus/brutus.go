@@ -53,18 +53,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/praetorian-inc/brutus/pkg/badkeys"
-)
-
-const (
-	// MaxBannerLength limits banner size to prevent prompt injection
-	MaxBannerLength = 500
-	// MaxPasswordLength limits suggested password length
-	MaxPasswordLength = 32
 )
 
 // =============================================================================
@@ -377,100 +369,3 @@ func Brute(cfg *Config) ([]Result, error) {
 	return results, nil
 }
 
-// =============================================================================
-// LLM Utilities
-// =============================================================================
-
-// createAnalyzer creates the appropriate LLM analyzer based on provider configuration.
-// Returns nil if provider is unknown or configuration is invalid.
-// Analyzers must register themselves using RegisterAnalyzer() in their init() functions.
-func createAnalyzer(cfg *LLMConfig) BannerAnalyzer {
-	if cfg == nil || !cfg.Enabled {
-		return nil
-	}
-
-	// Get analyzer from registry
-	factory := GetAnalyzerFactory(cfg.Provider)
-	if factory == nil {
-		return nil
-	}
-
-	return factory(cfg)
-}
-
-// BuildPrompt constructs the LLM prompt for banner analysis
-func BuildPrompt(protocol, banner string) string {
-	return `You are analyzing a service banner for penetration testing.
-
-Protocol: ` + protocol + `
-Banner (sanitized):
-"""
-` + banner + `
-"""
-
-Task: Suggest 3-4 likely default passwords for this specific service based on:
-1. Vendor/product name in banner
-2. Version numbers
-3. Common defaults for this product
-
-Return ONLY a JSON array of passwords, nothing else:
-["password1", "password2", "password3"]
-
-Rules:
-- Passwords must be realistic defaults (not random)
-- Max 32 characters each
-- Alphanumeric + common symbols only
-- NO commentary, NO explanations
-`
-}
-
-// SanitizeBanner removes control chars and limits length to prevent prompt injection
-func SanitizeBanner(banner string) string {
-	// 1. Remove null bytes
-	cleaned := strings.ReplaceAll(banner, "\x00", "")
-
-	// 2. Remove ANSI escape codes
-	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*m`)
-	cleaned = ansiRegex.ReplaceAllString(cleaned, "")
-
-	// 3. Remove triple quotes (prevent prompt escape)
-	cleaned = strings.ReplaceAll(cleaned, `"""`, "")
-
-	// 4. Limit length
-	if len(cleaned) > MaxBannerLength {
-		cleaned = cleaned[:MaxBannerLength]
-	}
-
-	return cleaned
-}
-
-// ValidateSuggestions ensures LLM output is safe
-func ValidateSuggestions(passwords []string) []string {
-	valid := []string{}
-
-	for _, pwd := range passwords {
-		// 1. Length check
-		if pwd == "" || len(pwd) > MaxPasswordLength {
-			continue
-		}
-
-		// 2. Character whitelist (alphanumeric + common symbols)
-		if !IsValidPassword(pwd) {
-			continue
-		}
-
-		valid = append(valid, pwd)
-		if len(valid) >= 4 {
-			break // Max 4 suggestions
-		}
-	}
-
-	return valid
-}
-
-// IsValidPassword checks for safe characters
-func IsValidPassword(pwd string) bool {
-	// Allow: a-zA-Z0-9 and common symbols: !@#$%^&*()-_=+[]{}
-	allowedPattern := regexp.MustCompile(`^[a-zA-Z0-9!@#$%^&*()\-_=+\[\]{}]+$`)
-	return allowedPattern.MatchString(pwd)
-}
