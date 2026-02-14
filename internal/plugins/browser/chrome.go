@@ -137,7 +137,7 @@ func (b *Browser) NavigateAndScreenshot(tabCtx context.Context, url string, time
 	var buf []byte
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
-		chromedp.Sleep(500*time.Millisecond),
+		chromedp.WaitReady("body", chromedp.ByQuery),
 		chromedp.CaptureScreenshot(&buf),
 	)
 	return buf, err
