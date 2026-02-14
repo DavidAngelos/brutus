@@ -28,6 +28,9 @@ var redisAuthIndicators = []string{
 	"noauth",
 	"wrongpass",
 	"invalid password",
+	"err invalid password",    // Some Redis versions prefix with ERR
+	"err client sent auth",    // Auth not enabled on server
+	"without any password",    // No password configured
 }
 
 func init() {

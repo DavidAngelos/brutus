@@ -27,8 +27,9 @@ import (
 
 var postgresqlAuthIndicators = []string{
 	"password authentication failed",
-	"role",
+	"role \"",              // More specific: 'role "username" does not exist'
 	"does not exist",
+	"no pg_hba.conf entry", // Server config rejects connection for this user/host
 }
 
 func init() {

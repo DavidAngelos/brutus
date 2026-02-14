@@ -32,6 +32,8 @@ var sshAuthIndicators = []string{
 	"unable to authenticate",
 	"permission denied",
 	"no supported methods remain",
+	"keyboard-interactive",        // Some SSH servers use this for password auth failures
+	"publickey authentication failed", // Key-based auth rejection
 }
 
 func init() {
