@@ -570,9 +570,10 @@ func isHTTPProtocol(protocol string) bool {
 	}
 }
 
-// runWorkersDefault executes credential testing using a bounded worker pool.
-// Uses errgroup for concurrency control and context cancellation for early stopping.
-func runWorkersDefault(ctx context.Context, cfg *Config, plug Plugin) ([]Result, error) {
+// executeWorkerPool is the shared worker pool implementation used by both
+// runWorkersDefault and runWorkersWithCredentials. It handles concurrency control,
+// rate limiting, jitter, max attempts, result collection, and early stopping.
+func executeWorkerPool(ctx context.Context, cfg *Config, plug Plugin, credentials []credential, llmSuggestions []string) ([]Result, error) {
 	// Create cancellable context for early stop
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -595,33 +596,6 @@ func runWorkersDefault(ctx context.Context, cfg *Config, plug Plugin) ([]Result,
 		mu            sync.Mutex
 		found         atomic.Bool
 	)
-
-	// Generate all credential combinations
-	var credentials []credential
-
-	// Add pre-paired credentials (no Cartesian product)
-	for _, c := range cfg.Credentials {
-		credentials = append(credentials, credential{
-			username: c.Username,
-			password: c.Password,
-			key:      c.Key,
-		})
-	}
-
-	// Add password-based credentials (Cartesian product)
-	if len(cfg.Passwords) > 0 {
-		credentials = append(credentials, generateCredentials(cfg.Usernames, cfg.Passwords)...)
-	}
-
-	// Add key-based credentials (Cartesian product, if supported by plugin)
-	if len(cfg.Keys) > 0 {
-		credentials = append(credentials, generateKeyCredentials(cfg.Usernames, cfg.Keys)...)
-	}
-
-	// Reorder for spray mode if enabled
-	if cfg.SprayMode {
-		credentials = reorderForSpray(credentials)
-	}
 
 	// Launch workers
 	for _, cred := range credentials {
@@ -685,6 +659,12 @@ func runWorkersDefault(ctx context.Context, cfg *Config, plug Plugin) ([]Result,
 				result = plug.Test(ctx, cfg.Target, cred.username, cred.password, cfg.Timeout)
 			}
 
+			// Populate LLM tracking fields if suggestions were provided
+			if len(llmSuggestions) > 0 {
+				result.LLMSuggested = cred.llmSuggested
+				result.LLMSuggestedCreds = llmSuggestions
+			}
+
 			// Collect result
 			mu.Lock()
 			results = append(results, *result)
@@ -706,6 +686,40 @@ func runWorkersDefault(ctx context.Context, cfg *Config, plug Plugin) ([]Result,
 	}
 
 	return results, nil
+}
+
+// runWorkersDefault executes credential testing using a bounded worker pool.
+// Uses errgroup for concurrency control and context cancellation for early stopping.
+func runWorkersDefault(ctx context.Context, cfg *Config, plug Plugin) ([]Result, error) {
+	// Generate all credential combinations
+	var credentials []credential
+
+	// Add pre-paired credentials (no Cartesian product)
+	for _, c := range cfg.Credentials {
+		credentials = append(credentials, credential{
+			username: c.Username,
+			password: c.Password,
+			key:      c.Key,
+		})
+	}
+
+	// Add password-based credentials (Cartesian product)
+	if len(cfg.Passwords) > 0 {
+		credentials = append(credentials, generateCredentials(cfg.Usernames, cfg.Passwords)...)
+	}
+
+	// Add key-based credentials (Cartesian product, if supported by plugin)
+	if len(cfg.Keys) > 0 {
+		credentials = append(credentials, generateKeyCredentials(cfg.Usernames, cfg.Keys)...)
+	}
+
+	// Reorder for spray mode if enabled
+	if cfg.SprayMode {
+		credentials = reorderForSpray(credentials)
+	}
+
+	// Execute worker pool with no LLM suggestions
+	return executeWorkerPool(ctx, cfg, plug, credentials, nil)
 }
 
 // runWorkersWithLLM executes credential testing with optional LLM-based banner analysis.
@@ -805,103 +819,8 @@ func createAnalyzer(cfg *LLMConfig) BannerAnalyzer {
 // runWorkersWithCredentials executes credential testing with a pre-built credential list.
 // Similar to runWorkersDefault but accepts a pre-built credential list with LLM tracking.
 func runWorkersWithCredentials(ctx context.Context, cfg *Config, plug Plugin, credentials []credential, llmSuggestions []string) ([]Result, error) {
-	// Create cancellable context for early stop
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	// Setup errgroup with bounded concurrency
-	g, ctx := errgroup.WithContext(ctx)
-	g.SetLimit(cfg.Threads)
-
-	// Create rate limiter if configured
-	var limiter *rate.Limiter
-	if cfg.RateLimit > 0 {
-		limiter = rate.NewLimiter(rate.Limit(cfg.RateLimit), 1)
-	}
-
-	// Result collection with mutex protection
-	var (
-		results       []Result
-		attemptCounts = make(map[string]int)
-		attemptMu     sync.Mutex
-		mu            sync.Mutex
-		found         atomic.Bool
-	)
-
-	// Launch workers
-	for _, cred := range credentials {
-		// Check early stop before launching new worker
-		if cfg.StopOnSuccess && found.Load() {
-			break
-		}
-
-		// Capture loop variable for closure
-		cred := cred
-
-		g.Go(func() error {
-			// Check context cancellation
-			select {
-			case <-ctx.Done():
-				return nil
-			default:
-			}
-
-			// Apply rate limiting if configured
-			if limiter != nil {
-				if err := limiter.Wait(ctx); err != nil {
-					return nil // Context canceled
-				}
-				// Apply jitter if configured
-				if cfg.Jitter > 0 {
-					jitterDuration := time.Duration(rand.Int63n(int64(cfg.Jitter)))
-					select {
-					case <-time.After(jitterDuration):
-						// Jitter sleep completed
-					case <-ctx.Done():
-						return nil // Context canceled during jitter
-					}
-				}
-			}
-
-			// Check max attempts per user
-			if cfg.MaxAttempts > 0 {
-				attemptMu.Lock()
-				if attemptCounts[cred.username] >= cfg.MaxAttempts {
-					attemptMu.Unlock()
-					return nil
-				}
-				attemptCounts[cred.username]++
-				attemptMu.Unlock()
-			}
-
-			// Test credential
-			result := plug.Test(ctx, cfg.Target, cred.username, cred.password, cfg.Timeout)
-
-			// Populate LLM tracking fields
-			result.LLMSuggested = cred.llmSuggested
-			result.LLMSuggestedCreds = llmSuggestions
-
-			// Collect result
-			mu.Lock()
-			results = append(results, *result)
-			mu.Unlock()
-
-			// Handle success with early stop
-			if result.Success && cfg.StopOnSuccess {
-				found.Store(true)
-				cancel() // Signal all workers to stop
-			}
-
-			return nil
-		})
-	}
-
-	// Wait for all workers to complete
-	if err := g.Wait(); err != nil && err != context.Canceled {
-		return results, err
-	}
-
-	return results, nil
+	// Execute worker pool with LLM suggestions
+	return executeWorkerPool(ctx, cfg, plug, credentials, llmSuggestions)
 }
 
 // =============================================================================
