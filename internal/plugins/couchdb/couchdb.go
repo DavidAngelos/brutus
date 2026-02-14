@@ -59,11 +59,29 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	// Build URL for CouchDB session endpoint
 	url := fmt.Sprintf("http://%s/_session", target)
 
-	// Create HTTP client with timeout and TLS config to skip cert verification
+	// Read TLS mode from context
+	tlsMode := brutus.TLSModeFromContext(ctx)
+
+	// Configure TLS based on mode
+	var tlsConfig *tls.Config
+	switch tlsMode {
+	case "verify":
+		tlsConfig = &tls.Config{
+			InsecureSkipVerify: false, // Full certificate verification
+		}
+	case "skip-verify":
+		tlsConfig = &tls.Config{
+			InsecureSkipVerify: true, // Allow self-signed certs
+		}
+	default: // "disable"
+		tlsConfig = nil // No TLS
+	}
+
+	// Create HTTP client with timeout and TLS config
 	client := &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig: tlsConfig,
 		},
 	}
 
