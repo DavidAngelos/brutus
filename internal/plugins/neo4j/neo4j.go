@@ -71,10 +71,27 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	// Create authentication token
 	auth := neo4j.BasicAuth(username, password, "")
 
-	// Create driver with timeout context
-	// Skip TLS verification to allow self-signed certs
+	// Read TLS mode from context
+	tlsMode := brutus.TLSModeFromContext(ctx)
+
+	// Configure TLS based on mode
+	var tlsConfig *tls.Config
+	switch tlsMode {
+	case "verify":
+		tlsConfig = &tls.Config{
+			InsecureSkipVerify: false, // Full certificate verification
+		}
+	case "skip-verify":
+		tlsConfig = &tls.Config{
+			InsecureSkipVerify: true, // Allow self-signed certs
+		}
+	default: // "disable"
+		tlsConfig = nil // No TLS
+	}
+
+	// Create driver with TLS config
 	driver, err := neo4j.NewDriverWithContext(uri, auth, func(c *config.Config) {
-		c.TlsConfig = &tls.Config{InsecureSkipVerify: true}
+		c.TlsConfig = tlsConfig
 	})
 	if err != nil {
 		result.Error = classifyError(err)
