@@ -161,6 +161,11 @@ type AnalyzerFactory func(cfg *LLMConfig) BannerAnalyzer
 // Plugin defines the interface for authentication protocol implementations.
 // Each plugin must implement credential testing for a specific protocol (SSH, FTP, etc.).
 //
+// Thread Safety: Plugin instances may be shared across concurrent goroutines
+// in the worker pool. Implementations MUST be safe for concurrent use.
+// Stateless plugins (the common case) are inherently safe. If a plugin
+// maintains mutable state, it must use its own synchronization (e.g., sync.Mutex).
+//
 // Optional Key-Based Authentication:
 // Plugins may optionally implement the KeyPlugin interface for key-based authentication.
 // If a plugin implements KeyPlugin, the worker pool will automatically use it when
@@ -261,6 +266,9 @@ func (c *Config) validate() error {
 // =============================================================================
 
 // Brute executes a brute force attack using the provided configuration.
+//
+// The plugin is resolved once via GetPlugin and shared across all worker goroutines.
+// See the Plugin interface documentation for thread-safety requirements.
 func Brute(cfg *Config) ([]Result, error) {
 	// 1. Validate configuration
 	if err := cfg.validate(); err != nil {
