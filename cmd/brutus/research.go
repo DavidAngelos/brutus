@@ -31,7 +31,7 @@ import (
 
 // detectHTTPAuthTypeWithBanner probes an HTTP target to determine the authentication type.
 // Returns auth type ("basic", "form", or "" if not HTTP) and the banner text for LLM analysis.
-func detectHTTPAuthTypeWithBanner(target string, useHTTPS bool, timeout time.Duration, verbose bool) (authType, banner string) {
+func detectHTTPAuthTypeWithBanner(target string, useHTTPS bool, timeout time.Duration, tlsMode string, verbose bool) (authType, banner string) {
 	scheme := "http"
 	if useHTTPS {
 		scheme = "https"
@@ -42,7 +42,7 @@ func detectHTTPAuthTypeWithBanner(target string, useHTTPS bool, timeout time.Dur
 		Timeout: timeout,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
+				InsecureSkipVerify: tlsMode != "verify",
 			},
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -116,10 +116,6 @@ func researchBrowserCredentials(target string, base *baseConfigOptions) ([]brutu
 		return nil, nil
 	}
 
-	// Get API keys
-	perplexityKey := os.Getenv("PERPLEXITY_API_KEY")
-	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
-
 	// Create the browser plugin with configured analyzers
 	browserPlugin := &browser.Plugin{
 		Timeout:         60 * time.Second,
@@ -132,9 +128,9 @@ func researchBrowserCredentials(target string, base *baseConfigOptions) ([]brutu
 	}
 
 	// Configure Vision analyzer (Claude) for screenshot analysis
-	if anthropicKey != "" {
+	if base.anthropicKey != "" {
 		browserPlugin.VisionAnalyzer = &vision.Client{
-			APIKey: anthropicKey,
+			APIKey: base.anthropicKey,
 		}
 		if base.verbose {
 			fmt.Fprintf(os.Stderr, "[verbose] Configured Claude Vision for screenshot analysis\n")
@@ -144,13 +140,13 @@ func researchBrowserCredentials(target string, base *baseConfigOptions) ([]brutu
 	}
 
 	// Configure Credential researcher (Perplexity) for default credential lookup
-	if perplexityKey != "" {
+	if base.perplexityKey != "" {
 		factory := brutus.GetAnalyzerFactory("perplexity")
 		if factory != nil {
 			analyzer := factory(&brutus.LLMConfig{
 				Enabled:  true,
 				Provider: "perplexity",
-				APIKey:   perplexityKey,
+				APIKey:   base.perplexityKey,
 			})
 			if credAnalyzer, ok := analyzer.(brutus.CredentialAnalyzer); ok {
 				browserPlugin.CredentialResearcher = credAnalyzer

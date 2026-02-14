@@ -40,6 +40,9 @@ const (
 // createAnalyzer creates the appropriate LLM analyzer based on provider configuration.
 // Returns nil if provider is unknown or configuration is invalid.
 // Analyzers must register themselves using RegisterAnalyzer() in their init() functions.
+//
+// BUILD TAG NOTE: This function calls GetAnalyzerFactory (registry.go). A future
+// "nollm" stub should return nil directly without calling GetAnalyzerFactory.
 func createAnalyzer(cfg *LLMConfig) BannerAnalyzer {
 	if cfg == nil || !cfg.Enabled {
 		return nil

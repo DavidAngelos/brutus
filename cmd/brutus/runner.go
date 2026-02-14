@@ -80,7 +80,7 @@ func runFromStdin(base *baseConfigOptions, jsonOut bool) ([]brutus.Result, bool)
 		// AI mode: For HTTP services, detect auth type and route appropriately
 		if base.aiMode && (protocol == "http" || protocol == "https") {
 			useHTTPS := protocol == "https"
-			authType, banner := detectHTTPAuthTypeWithBanner(target, useHTTPS, base.timeout, base.verbose)
+			authType, banner := detectHTTPAuthTypeWithBanner(target, useHTTPS, base.timeout, targetTLSMode, base.verbose)
 			if authType == "basic" {
 				// HTTP Basic Auth detected - use LLM to research credentials
 				if base.verbose {

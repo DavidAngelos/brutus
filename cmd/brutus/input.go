@@ -71,6 +71,18 @@ func loadKey(keyFile string) [][]byte {
 		return nil
 	}
 
+	// Check file size to prevent OOM from excessively large files
+	info, err := os.Stat(keyFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error accessing key file %s: %v\n", keyFile, err)
+		os.Exit(1)
+	}
+	const maxKeyFileSize = 1 << 20 // 1MB - generous limit for SSH/TLS keys
+	if info.Size() > maxKeyFileSize {
+		fmt.Fprintf(os.Stderr, "Error: key file %s is %d bytes (max %d bytes)\n", keyFile, info.Size(), maxKeyFileSize)
+		os.Exit(1)
+	}
+
 	key, err := os.ReadFile(keyFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading key file %s: %v\n", keyFile, err)

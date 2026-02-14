@@ -47,6 +47,8 @@ type baseConfigOptions struct {
 	jitter            time.Duration       // Random delay variance for rate limiting
 	maxAttempts       int
 	sprayMode         bool
+	anthropicKey      string              // ANTHROPIC_API_KEY (read once in main)
+	perplexityKey     string              // PERPLEXITY_API_KEY (read once in main)
 }
 
 // determineTLSMode returns the appropriate TLS mode based on the verify-tls flag

@@ -102,12 +102,14 @@ func main() {
 		printBanner(useColor)
 	}
 
+	// Read API keys once (used by AI mode and browser research)
+	perplexityKey := os.Getenv("PERPLEXITY_API_KEY")
+	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
+
 	// AI mode validation - requires ANTHROPIC_API_KEY for Claude Vision
 	// PERPLEXITY_API_KEY is optional for additional web search credential research
 	var aiLLMConfig *brutus.LLMConfig
 	if *aiMode {
-		perplexityKey := os.Getenv("PERPLEXITY_API_KEY")
-		anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
 
 		if anthropicKey == "" {
 			fmt.Fprintf(os.Stderr, "Error: --experimental-ai requires ANTHROPIC_API_KEY for Claude Vision (screenshot analysis)\n")
@@ -146,7 +148,7 @@ func main() {
 	var jsonWriter io.Writer = os.Stdout
 	var outputFileHandle *os.File
 	if *outputFile != "" {
-		f, err := os.Create(*outputFile)
+		f, err := os.OpenFile(*outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
 			os.Exit(1)
@@ -189,6 +191,8 @@ func main() {
 		jitter:           *jitter,
 		maxAttempts:      *maxAttempts,
 		sprayMode:        *sprayMode,
+		anthropicKey:     anthropicKey,
+		perplexityKey:    perplexityKey,
 	}
 
 	var allResults []brutus.Result
@@ -226,7 +230,7 @@ func main() {
 		// AI mode for single target with HTTP protocol
 		if baseConfig.aiMode && (proto == "http" || proto == "https") {
 			useHTTPS := proto == "https"
-			authType, banner := detectHTTPAuthTypeWithBanner(*target, useHTTPS, baseConfig.timeout, baseConfig.verbose)
+			authType, banner := detectHTTPAuthTypeWithBanner(*target, useHTTPS, baseConfig.timeout, baseConfig.tlsMode, baseConfig.verbose)
 			if authType == "basic" {
 				if baseConfig.verbose {
 					fmt.Fprintf(os.Stderr, "[verbose] AI mode: %s uses Basic Auth, using LLM analysis\n", *target)
