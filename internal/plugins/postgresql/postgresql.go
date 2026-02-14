@@ -18,7 +18,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -65,7 +64,7 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	}
 
 	// Parse target to extract host and port
-	host, port := parseTarget(target)
+	host, port := brutus.ParseTarget(target, "5432")
 
 	// Build PostgreSQL connection string
 	connStr := fmt.Sprintf("user=%s password=%s host=%s port=%s sslmode=disable connect_timeout=%d",
@@ -98,17 +97,6 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	return result
 }
 
-// parseTarget splits target into host and port.
-// If no port is specified, defaults to 5432.
-func parseTarget(target string) (host, port string) {
-	// Check if target contains port
-	if strings.Contains(target, ":") {
-		parts := strings.SplitN(target, ":", 2)
-		return parts[0], parts[1]
-	}
-	// Default to port 5432 if not specified
-	return target, "5432"
-}
 
 // classifyError classifies database errors.
 // Uses shared brutus.ClassifyAuthError with PostgreSQL auth indicators

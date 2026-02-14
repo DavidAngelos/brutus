@@ -19,7 +19,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
@@ -139,14 +138,9 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 
 // parseTarget splits target into host and port.
 // If no port is specified, defaults to 389.
+// Delegates to brutus.ParseTarget for IPv6 support.
 func parseTarget(target string) (host, port string) {
-	// Check if target contains port
-	if strings.Contains(target, ":") {
-		parts := strings.SplitN(target, ":", 2)
-		return parts[0], parts[1]
-	}
-	// Default to port 389 if not specified
-	return target, "389"
+	return brutus.ParseTarget(target, "389")
 }
 
 // classifyError classifies LDAP errors using the shared brutus helper.

@@ -17,7 +17,6 @@ package redis
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -64,7 +63,7 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	}
 
 	// Parse target to extract host and port
-	host, port := parseTarget(target)
+	host, port := brutus.ParseTarget(target, "6379")
 	addr := fmt.Sprintf("%s:%s", host, port)
 
 	// Create Redis client
@@ -94,18 +93,6 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	result.Success = true
 	result.Duration = time.Since(start)
 	return result
-}
-
-// parseTarget splits target into host and port.
-// If no port is specified, defaults to 6379.
-func parseTarget(target string) (host, port string) {
-	// Check if target contains port
-	if strings.Contains(target, ":") {
-		parts := strings.SplitN(target, ":", 2)
-		return parts[0], parts[1]
-	}
-	// Default to port 6379 if not specified
-	return target, "6379"
 }
 
 // classifyError classifies Redis errors using the shared auth error classifier.
