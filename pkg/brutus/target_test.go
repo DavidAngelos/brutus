@@ -3,8 +3,9 @@ package brutus_test
 import (
 	"testing"
 
-	"github.com/praetorian-inc/brutus/pkg/brutus"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
 
 func TestParseTarget_IPv4(t *testing.T) {

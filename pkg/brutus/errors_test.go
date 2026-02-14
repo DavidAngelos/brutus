@@ -4,9 +4,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/praetorian-inc/brutus/pkg/brutus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
 
 func TestClassifyAuthError_Nil(t *testing.T) {
