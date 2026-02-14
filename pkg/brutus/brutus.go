@@ -55,7 +55,6 @@ import (
 	"math/rand"
 	"net/http"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -212,93 +211,6 @@ type KeyPlugin interface {
 // Using a factory pattern ensures each call to Get returns a fresh instance,
 // which is important for concurrent usage.
 type PluginFactory func() Plugin
-
-// =============================================================================
-// Plugin Registry
-// =============================================================================
-
-var (
-	pluginRegistryMu sync.RWMutex
-	pluginRegistry   = make(map[string]PluginFactory)
-)
-
-// Register adds a plugin factory to the registry.
-// This function should be called from plugin init() functions.
-// Panics if a plugin with the same name is already registered.
-func Register(name string, factory PluginFactory) {
-	pluginRegistryMu.Lock()
-	defer pluginRegistryMu.Unlock()
-
-	if _, exists := pluginRegistry[name]; exists {
-		panic(fmt.Sprintf("brutus: plugin %q already registered", name))
-	}
-
-	pluginRegistry[name] = factory
-}
-
-// GetPlugin retrieves a plugin by name and returns a new instance.
-// Returns an error if the plugin is not found.
-// Each call returns a fresh instance from the factory.
-func GetPlugin(name string) (Plugin, error) {
-	pluginRegistryMu.RLock()
-	factory, exists := pluginRegistry[name]
-	pluginRegistryMu.RUnlock()
-
-	if !exists {
-		available := ListPlugins()
-		return nil, fmt.Errorf("unknown protocol %q (available: %v)", name, available)
-	}
-
-	return factory(), nil
-}
-
-// ListPlugins returns a sorted list of all registered plugin names.
-// The list is sorted to ensure deterministic output in error messages.
-func ListPlugins() []string {
-	pluginRegistryMu.RLock()
-	defer pluginRegistryMu.RUnlock()
-
-	names := make([]string, 0, len(pluginRegistry))
-	for name := range pluginRegistry {
-		names = append(names, name)
-	}
-
-	sort.Strings(names)
-	return names
-}
-
-// ResetPlugins clears all registered plugins.
-// This function is intended for testing only.
-func ResetPlugins() {
-	pluginRegistryMu.Lock()
-	defer pluginRegistryMu.Unlock()
-
-	pluginRegistry = make(map[string]PluginFactory)
-}
-
-// =============================================================================
-// Analyzer Registry
-// =============================================================================
-
-var (
-	analyzerRegistryMu sync.RWMutex
-	analyzerRegistry   = make(map[string]AnalyzerFactory)
-)
-
-// RegisterAnalyzer registers an analyzer factory for a provider name.
-// This is called by analyzer implementations in their init() functions.
-func RegisterAnalyzer(provider string, factory AnalyzerFactory) {
-	analyzerRegistryMu.Lock()
-	defer analyzerRegistryMu.Unlock()
-	analyzerRegistry[provider] = factory
-}
-
-// GetAnalyzerFactory retrieves the factory for a given provider
-func GetAnalyzerFactory(provider string) AnalyzerFactory {
-	analyzerRegistryMu.RLock()
-	defer analyzerRegistryMu.RUnlock()
-	return analyzerRegistry[provider]
-}
 
 // =============================================================================
 // Standard Banners
