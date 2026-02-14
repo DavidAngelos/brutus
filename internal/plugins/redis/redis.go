@@ -25,6 +25,12 @@ import (
 	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
 
+var redisAuthIndicators = []string{
+	"noauth",
+	"wrongpass",
+	"invalid password",
+}
+
 func init() {
 	brutus.Register("redis", func() brutus.Plugin {
 		return &Plugin{}
@@ -102,35 +108,14 @@ func parseTarget(target string) (host, port string) {
 	return target, "6379"
 }
 
-// classifyError classifies Redis errors.
+// classifyError classifies Redis errors using the shared auth error classifier.
 //
 // Auth failure indicators (return nil):
-// - "NOAUTH Authentication required"
-// - "WRONGPASS invalid username-password pair"
+// - "noauth"
+// - "wrongpass"
 // - "invalid password"
 //
 // All other errors are connection problems (return wrapped error).
 func classifyError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	errStr := strings.ToLower(err.Error())
-
-	// Check for authentication failure indicators
-	authFailures := []string{
-		"noauth",
-		"wrongpass",
-		"invalid password",
-	}
-
-	for _, indicator := range authFailures {
-		if strings.Contains(errStr, indicator) {
-			// This is an authentication failure, not a connection error
-			return nil
-		}
-	}
-
-	// All other errors are connection problems
-	return fmt.Errorf("connection error: %w", err)
+	return brutus.ClassifyAuthError(err, redisAuthIndicators)
 }

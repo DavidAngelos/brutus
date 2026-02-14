@@ -26,6 +26,12 @@ import (
 	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
 
+var postgresqlAuthIndicators = []string{
+	"password authentication failed",
+	"role",
+	"does not exist",
+}
+
 func init() {
 	brutus.Register("postgresql", func() brutus.Plugin {
 		return &Plugin{}
@@ -81,7 +87,7 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	// Test connection with Ping
 	err = db.PingContext(pingCtx)
 	if err != nil {
-		result.Error = classifyAuthError(err)
+		result.Error = classifyError(err)
 		result.Duration = time.Since(start)
 		return result
 	}
@@ -104,46 +110,9 @@ func parseTarget(target string) (host, port string) {
 	return target, "5432"
 }
 
-// classifyError classifies database connection errors.
-// All connection errors are wrapped as connection errors.
+// classifyError classifies database errors.
+// Uses shared brutus.ClassifyAuthError with PostgreSQL auth indicators
+// to distinguish authentication failures from connection errors.
 func classifyError(err error) error {
-	return fmt.Errorf("connection error: %w", err)
-}
-
-// classifyAuthError classifies PostgreSQL authentication errors.
-//
-// Auth failure indicators (return nil):
-// - "password authentication failed"
-// - "role" + "does not exist"
-//
-// All other errors are connection problems (return wrapped error).
-func classifyAuthError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	errStr := strings.ToLower(err.Error())
-
-	// Check for authentication failure indicators
-	authFailures := []string{
-		"password authentication failed",
-		"role",
-	}
-
-	for _, indicator := range authFailures {
-		if strings.Contains(errStr, indicator) {
-			// Check for "does not exist" which indicates invalid username
-			if strings.Contains(errStr, "does not exist") {
-				// Username doesn't exist - this is still an auth failure
-				return nil
-			}
-			// Password authentication failed - this is an auth failure
-			if strings.Contains(errStr, "password authentication failed") {
-				return nil
-			}
-		}
-	}
-
-	// All other errors are connection problems
-	return fmt.Errorf("connection error: %w", err)
+	return brutus.ClassifyAuthError(err, postgresqlAuthIndicators)
 }
