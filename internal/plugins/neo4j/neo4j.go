@@ -30,7 +30,6 @@ var neo4jAuthIndicators = []string{
 	"authentication failure",
 	"invalid credentials",
 	"authentication failed",
-	"auth",
 }
 
 func init() {

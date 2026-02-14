@@ -108,7 +108,7 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	}
 
 	if err != nil {
-		result.Error = classifyAuthError(err)
+		result.Error = classifyError(err)
 		result.Duration = time.Since(start)
 		return result
 	}
@@ -133,9 +133,3 @@ func classifyError(err error) error {
 	return brutus.ClassifyAuthError(err, imapAuthIndicators)
 }
 
-// classifyAuthError classifies IMAP authentication errors.
-// Uses shared brutus.ClassifyAuthError to distinguish authentication
-// failures from connection errors.
-func classifyAuthError(err error) error {
-	return brutus.ClassifyAuthError(err, imapAuthIndicators)
-}
