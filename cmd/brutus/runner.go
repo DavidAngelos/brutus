@@ -40,11 +40,7 @@ func runFromStdin(base *baseConfigOptions, jsonOut bool) ([]brutus.Result, bool)
 		// Parse fingerprintx JSON
 		var fpx FingerprintxResult
 		if err := json.Unmarshal([]byte(line), &fpx); err != nil {
-			if base.useColor {
-				fmt.Fprintf(os.Stderr, "%s%s Warning:%s failed to parse JSON: %v%s\n", ColorYellow, SymbolWarning, ColorReset, err, ColorReset)
-			} else {
-				fmt.Fprintf(os.Stderr, "Warning: failed to parse JSON: %v\n", err)
-			}
+			warnMsg(base.useColor, "failed to parse JSON: %v", err)
 			continue
 		}
 
@@ -61,62 +57,19 @@ func runFromStdin(base *baseConfigOptions, jsonOut bool) ([]brutus.Result, bool)
 		}
 
 		// Determine TLS mode for this specific target
-		targetTLSMode := base.tlsMode
-		if targetTLSMode == "disable" {
-			if metadata, ok := fpx.Metadata["tls"]; ok {
-				// If TLS is detected in metadata, auto-upgrade to skip-verify
-				if tlsEnabled, ok := metadata.(bool); ok && tlsEnabled {
-					targetTLSMode = "skip-verify"
-					if base.verbose {
-						fmt.Fprintf(os.Stderr, "[verbose] TLS detected in fingerprintx metadata, auto-upgrading to skip-verify mode\n")
-					}
-				}
-			}
-		}
+		targetTLSMode := detectTLSFromMetadata(base.tlsMode, fpx.Metadata, base.verbose)
 
 		// Build target string
 		target := fmt.Sprintf("%s:%d", fpx.IP, fpx.Port)
 
 		// AI mode: For HTTP services, detect auth type and route appropriately
+		var aiCreds []brutus.Credential
 		if base.aiMode && (protocol == "http" || protocol == "https") {
-			useHTTPS := protocol == "https"
-			authType, banner := detectHTTPAuthTypeWithBanner(target, useHTTPS, base.timeout, targetTLSMode, base.verbose)
-			if authType == "basic" {
-				// HTTP Basic Auth detected - use LLM to research credentials
-				if base.verbose {
-					fmt.Fprintf(os.Stderr, "[verbose] AI mode: %s uses Basic Auth, using LLM analysis\n", target)
-				}
-
-				// Research credentials using LLM
-				if base.llmConfig != nil && base.llmConfig.Enabled {
-					creds := researchCredentialsWithLLM(target, banner, base.llmConfig, base.verbose)
-					if len(creds) > 0 {
-						// Add researched credentials to base config for this target
-						base.aiResearchedCreds = creds
-						if base.verbose {
-							fmt.Fprintf(os.Stderr, "[verbose] LLM researched %d credential pairs for %s\n", len(creds), target)
-						}
-					}
-				}
-				// Keep http/https protocol
-			} else {
-				// No Basic Auth - likely form-based, use browser protocol
-				if base.verbose {
-					fmt.Fprintf(os.Stderr, "[verbose] AI mode: %s appears form-based, using browser automation\n", target)
-				}
-				protocol = "browser"
-			}
+			protocol, aiCreds = routeHTTPWithAI(target, protocol, base)
 		}
 
-		// Temporarily set TLS mode for this target, then restore
-		originalTLSMode := base.tlsMode
-		base.tlsMode = targetTLSMode
-
 		// Run against this target
-		results, success := runSingleTarget(target, protocol, base)
-
-		// Restore original TLS mode to prevent mutation across targets
-		base.tlsMode = originalTLSMode
+		results, success := runSingleTarget(target, protocol, targetTLSMode, base, aiCreds)
 		allResults = append(allResults, results...)
 		if success {
 			hasSuccess = true
@@ -129,18 +82,14 @@ func runFromStdin(base *baseConfigOptions, jsonOut bool) ([]brutus.Result, bool)
 	}
 
 	if err := scanner.Err(); err != nil {
-		if base.useColor {
-			fmt.Fprintf(os.Stderr, "%s%s Error:%s reading stdin: %v%s\n", ColorRed, SymbolError, ColorReset, err, ColorReset)
-		} else {
-			fmt.Fprintf(os.Stderr, "Error reading stdin: %v\n", err)
-		}
+		errMsg(base.useColor, "reading stdin: %v", err)
 	}
 
 	return allResults, hasSuccess
 }
 
 // runSingleTarget runs brutus against a single target
-func runSingleTarget(target, protocol string, base *baseConfigOptions) ([]brutus.Result, bool) {
+func runSingleTarget(target, protocol, tlsMode string, base *baseConfigOptions, aiCreds []brutus.Credential) ([]brutus.Result, bool) {
 	config := &brutus.Config{
 		Target:        target,
 		Protocol:      protocol,
@@ -153,7 +102,7 @@ func runSingleTarget(target, protocol string, base *baseConfigOptions) ([]brutus
 		Timeout:       base.timeout,
 		StopOnSuccess: base.stopOnSuccess,
 		LLMConfig:     base.llmConfig,
-		TLSMode:       base.tlsMode,
+		TLSMode:       tlsMode,
 		RateLimit:     base.rateLimit,
 		Jitter:        base.jitter,
 		MaxAttempts:   base.maxAttempts,
@@ -162,95 +111,44 @@ func runSingleTarget(target, protocol string, base *baseConfigOptions) ([]brutus
 
 	// Handle SNMP-specific tier selection (tiers are CLI-only, not in library defaults)
 	if protocol == "snmp" && len(config.Passwords) == 0 {
-		if !snmp.ValidateTier(base.snmpTier) {
-			if base.useColor {
-				fmt.Fprintf(os.Stderr, "%s%s Error:%s invalid --snmp-tier: %s (use: default, extended, full)%s\n",
-					ColorRed, SymbolError, ColorReset, base.snmpTier, ColorReset)
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: invalid --snmp-tier: %s (use: default, extended, full)\n", base.snmpTier)
-			}
+		if err := configureSNMP(config, base); err != nil {
+			errMsg(base.useColor, "%v", err)
 			return nil, false
 		}
-		config.Passwords = snmp.GetCommunityStrings(snmp.Tier(base.snmpTier))
 	}
 
 	// Handle HTTP with AI-researched credentials
-	if (protocol == "http" || protocol == "https") && len(base.aiResearchedCreds) > 0 {
-		// Clear default usernames/passwords - use only AI-discovered paired credentials
-		config.Usernames = nil
-		config.Passwords = nil
-
-		// Add AI-researched credentials
-		config.Credentials = append(config.Credentials, base.aiResearchedCreds...)
-
-		// Add admin:admin as basic fallback
-		config.Credentials = append(config.Credentials, brutus.Credential{
-			Username: "admin",
-			Password: "admin",
-		})
-
-		if base.verbose {
-			fmt.Fprintf(os.Stderr, "[verbose] Using %d AI-researched credentials for HTTP (+ admin:admin fallback)\n", len(base.aiResearchedCreds))
-		}
-
-		// Disable LLM in config to prevent duplicate analysis in brutus.go
-		config.LLMConfig = nil
-
-		// Clear researched creds so they don't leak to next target
-		base.aiResearchedCreds = nil
+	if (protocol == "http" || protocol == "https") && len(aiCreds) > 0 {
+		configureAICredentials(config, aiCreds, base.verbose)
 	}
 
 	// Handle browser-specific configuration
-	// Browser protocol requires AI mode - it's the AI-powered form authentication feature
 	if protocol == "browser" {
-		config.Threads = base.browserTabs
-		config.Timeout = base.browserTimeout
-
-		// Clear default usernames/passwords - browser uses AI-discovered paired credentials only
-		config.Usernames = nil
-		config.Passwords = nil
-
-		// Use Claude Vision + Perplexity for credential research
-		// Also get the configured browser plugin to use during brute force
-		aiCreds, browserPlugin := researchBrowserCredentials(target, base)
-		if len(aiCreds) > 0 {
-			config.Credentials = append(config.Credentials, aiCreds...)
-			if base.verbose {
-				fmt.Fprintf(os.Stderr, "[verbose] AI researched %d credentials for browser\n", len(aiCreds))
-			}
-		}
-		// Pass the configured plugin to Brute (so it has VisionAnalyzer, AIVerify, etc.)
-		if browserPlugin != nil {
-			config.Plugin = browserPlugin
+		if err := configureBrowser(config, target, base); err != nil {
+			errMsg(base.useColor, "%v", err)
+			return nil, false
 		}
 	}
 
 	// Verbose: print config summary before starting
-	if base.verbose {
-		fmt.Fprintf(os.Stderr, "[verbose] Target: %s (protocol: %s)\n", target, protocol)
-		fmt.Fprintf(os.Stderr, "[verbose] Paired credentials: %d, Usernames: %d, Passwords: %d, Keys: %d\n",
-			len(config.Credentials), len(config.Usernames), len(config.Passwords), len(config.Keys))
-		// Calculate total attempts
-		totalAttempts := len(config.Credentials)
-		if len(config.Passwords) > 0 {
-			totalAttempts += len(config.Usernames) * len(config.Passwords)
-		}
-		if len(config.Keys) > 0 {
-			totalAttempts += len(config.Usernames) * len(config.Keys)
-		}
-		fmt.Fprintf(os.Stderr, "[verbose] Total attempts: %d, Threads: %d, Timeout: %s\n",
-			totalAttempts, config.Threads, config.Timeout)
-		fmt.Fprintf(os.Stderr, "[verbose] Starting brute force...\n")
+	logVerbose(base.verbose, "Target: %s (protocol: %s)", target, protocol)
+	logVerbose(base.verbose, "Paired credentials: %d, Usernames: %d, Passwords: %d, Keys: %d",
+		len(config.Credentials), len(config.Usernames), len(config.Passwords), len(config.Keys))
+	totalAttempts := len(config.Credentials)
+	if len(config.Passwords) > 0 {
+		totalAttempts += len(config.Usernames) * len(config.Passwords)
 	}
+	if len(config.Keys) > 0 {
+		totalAttempts += len(config.Usernames) * len(config.Keys)
+	}
+	logVerbose(base.verbose, "Total attempts: %d, Threads: %d, Timeout: %s",
+		totalAttempts, config.Threads, config.Timeout)
+	logVerbose(base.verbose, "Starting brute force...")
 
 	// Run brute force
 	results, err := brutus.Brute(config)
 	if err != nil {
-		if base.useColor {
-			fmt.Fprintf(os.Stderr, "%s%s Error:%s testing %s: %v%s\n", ColorRed, SymbolError, ColorReset, target, err, ColorReset)
-		} else {
-			fmt.Fprintf(os.Stderr, "Error testing %s: %v\n", target, err)
-		}
+		errMsg(base.useColor, "testing %s: %v", target, err)
 		return nil, false
 	}
 
@@ -265,9 +163,63 @@ func runSingleTarget(target, protocol string, base *baseConfigOptions) ([]brutus
 	}
 
 	// Verbose: print completion summary
-	if base.verbose {
-		fmt.Fprintf(os.Stderr, "[verbose] Completed: %d results, %d successful\n", len(results), successCount)
-	}
+	logVerbose(base.verbose, "Completed: %d results, %d successful", len(results), successCount)
 
 	return results, hasSuccess
+}
+
+// configureSNMP validates SNMP tier and sets community string passwords on the config.
+func configureSNMP(config *brutus.Config, base *baseConfigOptions) error {
+	if !snmp.ValidateTier(base.snmpTier) {
+		return fmt.Errorf("invalid --snmp-tier: %s (use: default, extended, full)", base.snmpTier)
+	}
+	config.Passwords = snmp.GetCommunityStrings(snmp.Tier(base.snmpTier))
+	return nil
+}
+
+// configureAICredentials applies AI-researched credentials to the config, replacing defaults.
+func configureAICredentials(config *brutus.Config, aiCreds []brutus.Credential, verbose bool) {
+	config.Usernames = nil
+	config.Passwords = nil
+	config.Credentials = append(config.Credentials, aiCreds...)
+	config.Credentials = append(config.Credentials, brutus.Credential{
+		Username: "admin",
+		Password: "admin",
+	})
+	logVerbose(verbose, "Using %d AI-researched credentials for HTTP (+ admin:admin fallback)", len(aiCreds))
+	config.LLMConfig = nil
+}
+
+// detectTLSFromMetadata checks if TLS is detected in fingerprintx metadata and upgrades the TLS mode.
+func detectTLSFromMetadata(baseTLSMode string, metadata map[string]interface{}, verbose bool) string {
+	if baseTLSMode != "disable" {
+		return baseTLSMode
+	}
+	if tlsMeta, ok := metadata["tls"]; ok {
+		if tlsEnabled, ok := tlsMeta.(bool); ok && tlsEnabled {
+			logVerbose(verbose, "TLS detected in fingerprintx metadata, auto-upgrading to skip-verify mode")
+			return "skip-verify"
+		}
+	}
+	return baseTLSMode
+}
+
+// configureBrowser sets up browser-specific configuration including AI credential research.
+func configureBrowser(config *brutus.Config, target string, base *baseConfigOptions) error {
+	config.Threads = base.browserTabs
+	config.Timeout = base.browserTimeout
+	config.Usernames = nil
+	config.Passwords = nil
+	creds, browserPlugin := researchBrowserCredentials(target, base)
+	if len(creds) > 0 {
+		config.Credentials = append(config.Credentials, creds...)
+		logVerbose(base.verbose, "AI researched %d credentials for browser", len(creds))
+	}
+	if browserPlugin != nil {
+		config.Plugin = browserPlugin
+	}
+	if len(config.Credentials) == 0 && config.Plugin == nil {
+		return fmt.Errorf("browser mode: no credentials discovered and no browser plugin configured for %s", target)
+	}
+	return nil
 }

@@ -36,6 +36,41 @@ var (
 	CommitSHA = "unknown"
 )
 
+// setupAIConfig creates the LLM configuration for AI mode.
+func setupAIConfig(aiMode bool, anthropicKey, perplexityKey string) *brutus.LLMConfig {
+	if !aiMode {
+		return nil
+	}
+	if anthropicKey == "" {
+		fmt.Fprintf(os.Stderr, "Error: --experimental-ai requires ANTHROPIC_API_KEY for Claude Vision (screenshot analysis)\n")
+		fmt.Fprintf(os.Stderr, "       PERPLEXITY_API_KEY is optional for additional web search\n")
+		os.Exit(1)
+	}
+	if perplexityKey != "" {
+		return &brutus.LLMConfig{Enabled: true, Provider: "perplexity", APIKey: perplexityKey}
+	}
+	return &brutus.LLMConfig{Enabled: true, Provider: "claude-vision", APIKey: anthropicKey}
+}
+
+// setupOutputWriter configures the JSON output writer and returns a cleanup function.
+func setupOutputWriter(outputFile string, jsonOutput *bool) (io.Writer, func()) {
+	if outputFile == "" {
+		return os.Stdout, func() {}
+	}
+	f, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
+		os.Exit(1)
+	}
+	*jsonOutput = true
+	return f, func() { f.Close() }
+}
+
+// shouldShowBanner determines whether to display the ASCII art banner.
+func shouldShowBanner(showBanner, jsonOutput, stdinMode, quiet, useColor bool) bool {
+	return showBanner && !jsonOutput && !stdinMode && !quiet && useColor
+}
+
 func main() {
 	// Command-line flags
 	target := flag.String("target", "", "Target host:port")
@@ -98,7 +133,7 @@ func main() {
 	useStdin := *stdinMode || (*target == "" && hasStdinData())
 
 	// Show banner (unless in JSON mode, stdin mode, or quiet mode)
-	if *showBanner && !*jsonOutput && !useStdin && !*quiet && useColor {
+	if shouldShowBanner(*showBanner, *jsonOutput, useStdin, *quiet, useColor) {
 		printBanner(useColor)
 	}
 
@@ -106,33 +141,7 @@ func main() {
 	perplexityKey := os.Getenv("PERPLEXITY_API_KEY")
 	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
 
-	// AI mode validation - requires ANTHROPIC_API_KEY for Claude Vision
-	// PERPLEXITY_API_KEY is optional for additional web search credential research
-	var aiLLMConfig *brutus.LLMConfig
-	if *aiMode {
-
-		if anthropicKey == "" {
-			fmt.Fprintf(os.Stderr, "Error: --experimental-ai requires ANTHROPIC_API_KEY for Claude Vision (screenshot analysis)\n")
-			fmt.Fprintf(os.Stderr, "       PERPLEXITY_API_KEY is optional for additional web search\n")
-			os.Exit(1)
-		}
-
-		// Create LLM config - use Perplexity if available, otherwise just enable AI mode
-		if perplexityKey != "" {
-			aiLLMConfig = &brutus.LLMConfig{
-				Enabled:  true,
-				Provider: "perplexity",
-				APIKey:   perplexityKey,
-			}
-		} else {
-			// AI mode enabled but no Perplexity - Claude Vision will suggest credentials
-			aiLLMConfig = &brutus.LLMConfig{
-				Enabled:  true,
-				Provider: "claude-vision",
-				APIKey:   anthropicKey,
-			}
-		}
-	}
+	aiLLMConfig := setupAIConfig(*aiMode, anthropicKey, perplexityKey)
 
 	// Determine if badkeys should be used (--no-badkeys overrides --badkeys)
 	useBadkeys := *badkeys && !*noBadkeys
@@ -144,26 +153,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Setup JSON output writer (file or stdout)
-	var jsonWriter io.Writer = os.Stdout
-	var outputFileHandle *os.File
-	if *outputFile != "" {
-		f, err := os.OpenFile(*outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
-			os.Exit(1)
-		}
-		outputFileHandle = f
-		jsonWriter = f
-		// If -o is specified, imply --json
-		*jsonOutput = true
-	}
-	// Helper to close output file if opened
-	closeOutput := func() {
-		if outputFileHandle != nil {
-			outputFileHandle.Close()
-		}
-	}
+	jsonWriter, closeOutput := setupOutputWriter(*outputFile, jsonOutput)
 
 	// Prepare common config options
 	baseConfig := baseConfigOptions{
@@ -199,74 +189,9 @@ func main() {
 	var hasSuccess bool
 
 	if useStdin {
-		// Read targets from stdin (fingerprintx JSON)
 		allResults, hasSuccess = runFromStdin(&baseConfig, *jsonOutput)
 	} else {
-		// Single target mode
-		if *target == "" {
-			if useColor {
-				fmt.Fprintf(os.Stderr, "%s%sError:%s --target is required (or pipe data to stdin)\n\n%s", ColorBold, ColorRed, ColorReset, ColorReset)
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: --target is required (or pipe data to stdin)\n\n")
-			}
-			flag.Usage()
-			closeOutput()
-			os.Exit(1)
-		}
-
-		// Require protocol for single target mode
-		proto := *protocol
-		if proto == "" {
-			if baseConfig.useColor {
-				fmt.Fprintf(os.Stderr, "%s%sError:%s --protocol is required when using --target\n", ColorBold, ColorRed, ColorReset)
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: --protocol is required when using --target\n")
-			}
-			fmt.Fprintf(os.Stderr, "Example: brutus --target %s --protocol ssh\n", *target)
-			closeOutput()
-			os.Exit(1)
-		}
-
-		// AI mode for single target with HTTP protocol
-		if baseConfig.aiMode && (proto == "http" || proto == "https") {
-			useHTTPS := proto == "https"
-			authType, banner := detectHTTPAuthTypeWithBanner(*target, useHTTPS, baseConfig.timeout, baseConfig.tlsMode, baseConfig.verbose)
-			if authType == "basic" {
-				if baseConfig.verbose {
-					fmt.Fprintf(os.Stderr, "[verbose] AI mode: %s uses Basic Auth, using LLM analysis\n", *target)
-				}
-				if baseConfig.llmConfig != nil && baseConfig.llmConfig.Enabled {
-					creds := researchCredentialsWithLLM(*target, banner, baseConfig.llmConfig, baseConfig.verbose)
-					if len(creds) > 0 {
-						baseConfig.aiResearchedCreds = creds
-						if baseConfig.verbose {
-							fmt.Fprintf(os.Stderr, "[verbose] LLM researched %d credential pairs for %s\n", len(creds), *target)
-						}
-					}
-				}
-			} else {
-				proto = "browser"
-				if baseConfig.verbose {
-					fmt.Fprintf(os.Stderr, "[verbose] AI mode: %s appears form-based, using browser automation\n", *target)
-				}
-			}
-		}
-
-		// Print target info
-		if !*jsonOutput && !*quiet {
-			printTargetInfo(*target, proto, &baseConfig)
-		}
-
-		results, success := runSingleTarget(*target, proto, &baseConfig)
-		allResults = results
-		hasSuccess = success
-
-		// Output for single-target mode
-		if *jsonOutput {
-			outputJSONL(jsonWriter, results)
-		} else {
-			outputHuman(results, useColor, *quiet)
-		}
+		allResults, hasSuccess = runSingleTargetMode(*target, *protocol, &baseConfig, *jsonOutput, jsonWriter, closeOutput)
 	}
 
 	// Final JSON output for stdin mode
@@ -279,6 +204,45 @@ func main() {
 	if !hasSuccess {
 		os.Exit(1)
 	}
+}
+
+// runSingleTargetMode handles the single-target execution path.
+func runSingleTargetMode(target, protocol string, baseConfig *baseConfigOptions, jsonOutput bool, jsonWriter io.Writer, closeOutput func()) ([]brutus.Result, bool) {
+	if target == "" {
+		errMsg(baseConfig.useColor, "--target is required (or pipe data to stdin)")
+		flag.Usage()
+		closeOutput()
+		os.Exit(1)
+	}
+
+	if protocol == "" {
+		errMsg(baseConfig.useColor, "--protocol is required when using --target")
+		fmt.Fprintf(os.Stderr, "Example: brutus --target %s --protocol ssh\n", target)
+		closeOutput()
+		os.Exit(1)
+	}
+
+	// AI mode for single target with HTTP protocol
+	var aiCreds []brutus.Credential
+	if baseConfig.aiMode && (protocol == "http" || protocol == "https") {
+		protocol, aiCreds = routeHTTPWithAI(target, protocol, baseConfig)
+	}
+
+	// Print target info
+	if !jsonOutput && !baseConfig.quiet {
+		printTargetInfo(target, protocol, baseConfig, aiCreds)
+	}
+
+	results, success := runSingleTarget(target, protocol, baseConfig.tlsMode, baseConfig, aiCreds)
+
+	// Output for single-target mode
+	if jsonOutput {
+		outputJSONL(jsonWriter, results)
+	} else {
+		outputHuman(results, baseConfig.useColor, baseConfig.quiet)
+	}
+
+	return results, success
 }
 
 // hasStdinData checks if stdin has data available (i.e., is being piped to)

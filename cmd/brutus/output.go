@@ -23,6 +23,34 @@ import (
 	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
 
+// printSummary prints the results summary to stdout.
+func printSummary(validCount, invalidCount, errorCount, total int, useColor bool) {
+	if useColor {
+		fmt.Printf("\n%s\n", heading(useColor, "Results Summary"))
+		if validCount > 0 {
+			fmt.Printf("  %sValid:%s     %d\n", ColorGreen, ColorReset, validCount)
+		}
+		if invalidCount > 0 {
+			fmt.Printf("  %sInvalid:%s   %d\n", ColorDim, ColorReset, invalidCount)
+		}
+		if errorCount > 0 {
+			fmt.Printf("  %sErrors:%s    %d\n", ColorRed, ColorReset, errorCount)
+		}
+		fmt.Printf("  %sTotal:%s     %d\n", ColorCyan, ColorReset, total)
+	} else {
+		fmt.Printf("Results: %d valid, %d invalid, %d errors (total: %d)\n",
+			validCount, invalidCount, errorCount, total)
+	}
+
+	if errorCount > 5 {
+		if useColor {
+			fmt.Printf("\n%s%s Suppressed %d additional errors%s\n", ColorYellow, SymbolWarning, errorCount-5, ColorReset)
+		} else {
+			fmt.Printf("(Suppressed %d additional errors)\n", errorCount-5)
+		}
+	}
+}
+
 func outputHuman(results []brutus.Result, useColor, quiet bool) {
 	validCount := 0
 	invalidCount := 0
@@ -33,61 +61,24 @@ func outputHuman(results []brutus.Result, useColor, quiet bool) {
 		switch {
 		case r.Success:
 			validCount++
-			if useColor {
-				fmt.Printf("%s[+] VALID: %s %s:%s @ %s (%s)%s\n",
-					ColorGreen, r.Protocol, r.Username, r.Password, r.Target, r.Duration, ColorReset)
-				if r.LLMSuggested {
-					fmt.Printf("    %s(LLM-suggested)%s\n", ColorPurple, ColorReset)
-				}
-			} else {
-				fmt.Printf("[+] VALID: %s %s:%s @ %s (%s)\n",
-					r.Protocol, r.Username, r.Password, r.Target, r.Duration)
-				if r.LLMSuggested {
-					fmt.Printf("    (LLM-suggested)\n")
-				}
+			fmt.Printf("%s[+] VALID: %s %s:%s @ %s (%s)%s\n",
+				colorIf(useColor, ColorGreen), r.Protocol, r.Username, r.Password, r.Target, r.Duration, colorIf(useColor, ColorReset))
+			if r.LLMSuggested {
+				fmt.Printf("    %s\n", highlight(useColor, "(LLM-suggested)"))
 			}
 		case r.Error != nil:
 			errorCount++
 			if !quiet && errorCount <= 5 {
-				if useColor {
-					fmt.Printf("%s%s ERROR:%s %s:%s @ %s - %v%s\n",
-						ColorRed, SymbolError, ColorReset, r.Username, r.Password, r.Target, r.Error, ColorReset)
-				} else {
-					fmt.Printf("[-] ERROR: %s:%s @ %s - %v\n",
-						r.Username, r.Password, r.Target, r.Error)
-				}
+				fmt.Printf("%s%s ERROR:%s %s:%s @ %s - %v\n",
+					colorIf(useColor, ColorRed), SymbolError, colorIf(useColor, ColorReset), r.Username, r.Password, r.Target, r.Error)
 			}
 		default:
 			invalidCount++
 		}
 	}
 
-	// Summary (skip in quiet mode unless there are valid credentials)
 	if !quiet || validCount > 0 {
-		if useColor {
-			fmt.Printf("\n%sResults Summary%s\n", ColorBold, ColorReset)
-			if validCount > 0 {
-				fmt.Printf("  %sValid:%s     %d\n", ColorGreen, ColorReset, validCount)
-			}
-			if invalidCount > 0 {
-				fmt.Printf("  %sInvalid:%s   %d\n", ColorDim, ColorReset, invalidCount)
-			}
-			if errorCount > 0 {
-				fmt.Printf("  %sErrors:%s    %d\n", ColorRed, ColorReset, errorCount)
-			}
-			fmt.Printf("  %sTotal:%s     %d\n", ColorCyan, ColorReset, len(results))
-		} else {
-			fmt.Printf("Results: %d valid, %d invalid, %d errors (total: %d)\n",
-				validCount, invalidCount, errorCount, len(results))
-		}
-
-		if errorCount > 5 {
-			if useColor {
-				fmt.Printf("\n%s%s Suppressed %d additional errors%s\n", ColorYellow, SymbolWarning, errorCount-5, ColorReset)
-			} else {
-				fmt.Printf("(Suppressed %d additional errors)\n", errorCount-5)
-			}
-		}
+		printSummary(validCount, invalidCount, errorCount, len(results), useColor)
 	}
 }
 

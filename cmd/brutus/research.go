@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -28,6 +27,26 @@ import (
 	"github.com/praetorian-inc/brutus/internal/plugins/browser"
 	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
+
+// routeHTTPWithAI detects HTTP auth type and routes to appropriate AI credential research.
+// Returns the resolved protocol ("browser" for form-based, original for basic auth) and any AI-researched credentials.
+func routeHTTPWithAI(target, protocol string, base *baseConfigOptions) (string, []brutus.Credential) {
+	useHTTPS := protocol == "https"
+	authType, banner := detectHTTPAuthTypeWithBanner(target, useHTTPS, base.timeout, base.tlsMode, base.verbose)
+	if authType == "basic" {
+		logVerbose(base.verbose, "AI mode: %s uses Basic Auth, using LLM analysis", target)
+		if base.llmConfig != nil && base.llmConfig.Enabled {
+			creds := researchCredentialsWithLLM(target, banner, base.llmConfig, base.verbose)
+			if len(creds) > 0 {
+				logVerbose(base.verbose, "LLM researched %d credential pairs for %s", len(creds), target)
+				return protocol, creds
+			}
+		}
+		return protocol, nil
+	}
+	logVerbose(base.verbose, "AI mode: %s appears form-based, using browser automation", target)
+	return "browser", nil
+}
 
 // detectHTTPAuthTypeWithBanner probes an HTTP target to determine the authentication type.
 // Returns auth type ("basic", "form", or "" if not HTTP) and the banner text for LLM analysis.
@@ -52,17 +71,13 @@ func detectHTTPAuthTypeWithBanner(target string, useHTTPS bool, timeout time.Dur
 
 	req, err := http.NewRequest("GET", url, http.NoBody)
 	if err != nil {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[verbose] HTTP probe error creating request: %v\n", err)
-		}
+		logVerbose(verbose, "HTTP probe error creating request: %v", err)
 		return "", "" // Not HTTP or error
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[verbose] HTTP probe error: %v\n", err)
-		}
+		logVerbose(verbose, "HTTP probe error: %v", err)
 		return "", "" // Not HTTP or error
 	}
 	defer resp.Body.Close()
@@ -90,21 +105,43 @@ func detectHTTPAuthTypeWithBanner(target string, useHTTPS bool, timeout time.Dur
 
 	// Check for WWW-Authenticate header (indicates Basic Auth)
 	if authHeader := resp.Header.Get("WWW-Authenticate"); authHeader != "" {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[verbose] HTTP probe: WWW-Authenticate header found: %s\n", authHeader)
-		}
+		logVerbose(verbose, "HTTP probe: WWW-Authenticate header found: %s", authHeader)
 		return "basic", banner
 	}
 
 	// Check for 401 status without WWW-Authenticate (some servers don't send it)
 	if resp.StatusCode == http.StatusUnauthorized {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[verbose] HTTP probe: 401 without WWW-Authenticate, assuming basic\n")
-		}
+		logVerbose(verbose, "HTTP probe: 401 without WWW-Authenticate, assuming basic")
 		return "basic", banner
 	}
 
 	return "form", banner
+}
+
+// configureVisionAnalyzer sets up Claude Vision for screenshot analysis on the browser plugin.
+func configureVisionAnalyzer(plugin *browser.Plugin, apiKey string, verbose bool) {
+	if apiKey != "" {
+		plugin.VisionAnalyzer = &vision.Client{APIKey: apiKey}
+		logVerbose(verbose, "Configured Claude Vision for screenshot analysis")
+	} else {
+		logVerbose(verbose, "No ANTHROPIC_API_KEY - skipping vision analysis")
+	}
+}
+
+// configureCredentialResearcher sets up Perplexity for default credential lookup on the browser plugin.
+func configureCredentialResearcher(plugin *browser.Plugin, apiKey string, verbose bool) {
+	if apiKey != "" {
+		factory := brutus.GetAnalyzerFactory("perplexity")
+		if factory != nil {
+			analyzer := factory(&brutus.LLMConfig{Enabled: true, Provider: "perplexity", APIKey: apiKey})
+			if credAnalyzer, ok := analyzer.(brutus.CredentialAnalyzer); ok {
+				plugin.CredentialResearcher = credAnalyzer
+				logVerbose(verbose, "Configured Perplexity for credential research")
+			}
+		}
+	} else {
+		logVerbose(verbose, "No PERPLEXITY_API_KEY - skipping credential research")
+	}
 }
 
 // researchBrowserCredentials uses Claude Vision + Perplexity for browser-based credential research.
@@ -127,57 +164,25 @@ func researchBrowserCredentials(target string, base *baseConfigOptions) ([]brutu
 		AIVerify:        base.aiVerify,
 	}
 
-	// Configure Vision analyzer (Claude) for screenshot analysis
-	if base.anthropicKey != "" {
-		browserPlugin.VisionAnalyzer = &vision.Client{
-			APIKey: base.anthropicKey,
-		}
-		if base.verbose {
-			fmt.Fprintf(os.Stderr, "[verbose] Configured Claude Vision for screenshot analysis\n")
-		}
-	} else if base.verbose {
-		fmt.Fprintf(os.Stderr, "[verbose] No ANTHROPIC_API_KEY - skipping vision analysis\n")
-	}
+	configureVisionAnalyzer(browserPlugin, base.anthropicKey, base.verbose)
 
-	// Configure Credential researcher (Perplexity) for default credential lookup
-	if base.perplexityKey != "" {
-		factory := brutus.GetAnalyzerFactory("perplexity")
-		if factory != nil {
-			analyzer := factory(&brutus.LLMConfig{
-				Enabled:  true,
-				Provider: "perplexity",
-				APIKey:   base.perplexityKey,
-			})
-			if credAnalyzer, ok := analyzer.(brutus.CredentialAnalyzer); ok {
-				browserPlugin.CredentialResearcher = credAnalyzer
-				if base.verbose {
-					fmt.Fprintf(os.Stderr, "[verbose] Configured Perplexity for credential research\n")
-				}
-			}
-		}
-	} else if base.verbose {
-		fmt.Fprintf(os.Stderr, "[verbose] No PERPLEXITY_API_KEY - skipping credential research\n")
-	}
+	configureCredentialResearcher(browserPlugin, base.perplexityKey, base.verbose)
 
 	// Call AnalyzePage to do the full two-stage AI flow
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	if base.verbose {
-		fmt.Fprintf(os.Stderr, "[verbose] Starting headless browser (this may take a few seconds on first run)...\n")
-	}
+	logVerbose(base.verbose, "Starting headless browser (this may take a few seconds on first run)...")
 
 	pageAnalysis, credentials, err := browserPlugin.AnalyzePage(ctx, target)
 	if err != nil {
-		if base.verbose {
-			fmt.Fprintf(os.Stderr, "[verbose] Page analysis error: %v\n", err)
-		}
+		logVerbose(base.verbose, "Page analysis error: %v", err)
 		return nil, nil
 	}
 
 	// Log analysis results
-	if base.verbose && pageAnalysis != nil {
-		fmt.Fprintf(os.Stderr, "[verbose] Vision detected: %s %s %s (login page: %v, confidence: %.2f)\n",
+	if pageAnalysis != nil {
+		logVerbose(base.verbose, "Vision detected: %s %s %s (login page: %v, confidence: %.2f)",
 			pageAnalysis.Application.Vendor,
 			pageAnalysis.Application.Model,
 			pageAnalysis.Application.Type,
@@ -185,10 +190,10 @@ func researchBrowserCredentials(target string, base *baseConfigOptions) ([]brutu
 			pageAnalysis.Confidence)
 	}
 
-	if len(credentials) > 0 && base.verbose {
-		fmt.Fprintf(os.Stderr, "[verbose] AI researched %d credential pairs:\n", len(credentials))
+	if len(credentials) > 0 {
+		logVerbose(base.verbose, "AI researched %d credential pairs:", len(credentials))
 		for _, c := range credentials {
-			fmt.Fprintf(os.Stderr, "[verbose]   %s:%s\n", c.Username, c.Password)
+			logVerbose(base.verbose, "  %s:%s", c.Username, c.Password)
 		}
 	}
 
@@ -204,9 +209,7 @@ func researchCredentialsWithLLM(target, banner string, llmConfig *brutus.LLMConf
 	// Get the analyzer factory for the configured provider
 	factory := brutus.GetAnalyzerFactory(llmConfig.Provider)
 	if factory == nil {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[verbose] LLM analyzer not found for provider: %s\n", llmConfig.Provider)
-		}
+		logVerbose(verbose, "LLM analyzer not found for provider: %s", llmConfig.Provider)
 		return nil
 	}
 	analyzer := factory(llmConfig)
@@ -214,9 +217,7 @@ func researchCredentialsWithLLM(target, banner string, llmConfig *brutus.LLMConf
 	// Check if analyzer supports credential pairs (CredentialAnalyzer interface)
 	credAnalyzer, ok := analyzer.(brutus.CredentialAnalyzer)
 	if !ok {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[verbose] LLM analyzer doesn't support credential pairs, using password-only\n")
-		}
+		logVerbose(verbose, "LLM analyzer doesn't support credential pairs, using password-only")
 		// Fall back to password-only analysis
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -229,9 +230,7 @@ func researchCredentialsWithLLM(target, banner string, llmConfig *brutus.LLMConf
 
 		passwords, err := analyzer.Analyze(ctx, bannerInfo)
 		if err != nil {
-			if verbose {
-				fmt.Fprintf(os.Stderr, "[verbose] LLM analysis error: %v\n", err)
-			}
+			logVerbose(verbose, "LLM analysis error: %v", err)
 			return nil
 		}
 
@@ -257,16 +256,14 @@ func researchCredentialsWithLLM(target, banner string, llmConfig *brutus.LLMConf
 
 	creds, err := credAnalyzer.AnalyzeCredentials(ctx, bannerInfo)
 	if err != nil {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[verbose] LLM credential analysis error: %v\n", err)
-		}
+		logVerbose(verbose, "LLM credential analysis error: %v", err)
 		return nil
 	}
 
 	if verbose && len(creds) > 0 {
-		fmt.Fprintf(os.Stderr, "[verbose] LLM suggested credentials:\n")
+		logVerbose(verbose, "LLM suggested credentials:")
 		for _, c := range creds {
-			fmt.Fprintf(os.Stderr, "[verbose]   %s:%s\n", c.Username, c.Password)
+			logVerbose(verbose, "  %s:%s", c.Username, c.Password)
 		}
 	}
 

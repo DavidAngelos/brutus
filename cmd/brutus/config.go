@@ -37,12 +37,11 @@ type baseConfigOptions struct {
 	useColor          bool
 	quiet             bool
 	verbose           bool
-	useBadkeys        bool
-	protocolOverride  string              // Override fingerprintx-detected protocol
-	aiMode            bool                // Enable AI-powered credential detection for HTTP
-	aiVerify          bool                // Use Claude Vision to verify login success
-	aiResearchedCreds []brutus.Credential // Credentials researched by LLM for current target
-	tlsMode           string              // TLS verification mode: "disable", "verify", "skip-verify"
+	useBadkeys       bool
+	protocolOverride string        // Override fingerprintx-detected protocol
+	aiMode           bool          // Enable AI-powered credential detection for HTTP
+	aiVerify         bool          // Use Claude Vision to verify login success
+	tlsMode          string        // TLS verification mode: "disable", "verify", "skip-verify"
 	rateLimit         float64             // Max requests per second (0 = unlimited)
 	jitter            time.Duration       // Random delay variance for rate limiting
 	maxAttempts       int

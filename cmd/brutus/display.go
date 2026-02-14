@@ -16,7 +16,10 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"runtime"
+
+	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
 
 // ANSI Color Constants
@@ -80,60 +83,92 @@ func printVersion(useColor bool) {
 }
 
 // printTargetInfo displays target configuration details
-func printTargetInfo(target, protocol string, base *baseConfigOptions) {
+func printTargetInfo(target, protocol string, base *baseConfigOptions, aiCreds []brutus.Credential) {
 	useColor := base.useColor
 
-	// AI discovery modes - browser uses Vision+Perplexity, HTTP uses Perplexity for Basic Auth
 	isBrowserAI := protocol == "browser"
-	isHTTPAI := (protocol == "http" || protocol == "https") && base.aiMode && len(base.aiResearchedCreds) > 0
+	isHTTPAI := (protocol == "http" || protocol == "https") && base.aiMode && len(aiCreds) > 0
 	isAIMode := isBrowserAI || isHTTPAI
 
+	fmt.Printf("\n%s %s\n", dim(useColor, SymbolInfo), heading(useColor, "Target Information"))
+	fmt.Printf("  Target:      %s\n", target)
+	fmt.Printf("  Protocol:    %s\n", protocol)
+
 	switch {
-	case useColor:
-		fmt.Printf("\n%s%s %sTarget Information%s\n", ColorCyan, SymbolInfo, ColorBold, ColorReset)
-		fmt.Printf("  %sTarget:%s      %s\n", ColorCyan, ColorReset, target)
-		fmt.Printf("  %sProtocol:%s    %s\n", ColorCyan, ColorReset, protocol)
-		switch {
-		case isBrowserAI:
-			fmt.Printf("  %sCredentials:%s %sAI Discovery (Claude Vision + Perplexity)%s\n", ColorCyan, ColorReset, ColorPurple, ColorReset)
-		case isHTTPAI:
-			fmt.Printf("  %sCredentials:%s %sAI Discovery (Perplexity) + admin:admin%s\n", ColorCyan, ColorReset, ColorPurple, ColorReset)
-		default:
-			fmt.Printf("  %sUsers:%s       %d\n", ColorCyan, ColorReset, len(base.usernames))
-			fmt.Printf("  %sPasswords:%s   %d\n", ColorCyan, ColorReset, len(base.passwords))
-			if len(base.keys) > 0 {
-				fmt.Printf("  %sSSH Keys:%s    %d\n", ColorCyan, ColorReset, len(base.keys))
-			}
-		}
-		if base.llmConfig != nil && base.llmConfig.Enabled && !isAIMode {
-			fmt.Printf("  %sLLM:%s         %s%s enabled%s\n", ColorCyan, ColorReset, ColorPurple, base.llmConfig.Provider, ColorReset)
-		} else if !isAIMode {
-			fmt.Printf("  %sLLM:%s         %sdisabled%s\n", ColorCyan, ColorReset, ColorDim, ColorReset)
-		}
-		fmt.Printf("  %sThreads:%s     %d\n", ColorCyan, ColorReset, base.threads)
-		fmt.Printf("\n")
+	case isBrowserAI:
+		fmt.Printf("  Credentials: %s\n", highlight(useColor, "AI Discovery (Claude Vision + Perplexity)"))
+	case isHTTPAI:
+		fmt.Printf("  Credentials: %s\n", highlight(useColor, "AI Discovery (Perplexity) + admin:admin"))
 	default:
-		fmt.Printf("\n%s Target Information\n", SymbolInfo)
-		fmt.Printf("  Target:      %s\n", target)
-		fmt.Printf("  Protocol:    %s\n", protocol)
-		switch {
-		case isBrowserAI:
-			fmt.Printf("  Credentials: AI Discovery (Claude Vision + Perplexity)\n")
-		case isHTTPAI:
-			fmt.Printf("  Credentials: AI Discovery (Perplexity) + admin:admin\n")
-		default:
-			fmt.Printf("  Users:       %d\n", len(base.usernames))
-			fmt.Printf("  Passwords:   %d\n", len(base.passwords))
-			if len(base.keys) > 0 {
-				fmt.Printf("  SSH Keys:    %d\n", len(base.keys))
-			}
+		fmt.Printf("  Users:       %d\n", len(base.usernames))
+		fmt.Printf("  Passwords:   %d\n", len(base.passwords))
+		if len(base.keys) > 0 {
+			fmt.Printf("  SSH Keys:    %d\n", len(base.keys))
 		}
-		if base.llmConfig != nil && base.llmConfig.Enabled && !isAIMode {
-			fmt.Printf("  LLM:         %s enabled\n", base.llmConfig.Provider)
-		} else if !isAIMode {
-			fmt.Printf("  LLM:         disabled\n")
-		}
-		fmt.Printf("  Threads:     %d\n", base.threads)
-		fmt.Printf("\n")
 	}
+
+	if base.llmConfig != nil && base.llmConfig.Enabled && !isAIMode {
+		fmt.Printf("  LLM:         %s\n", highlight(useColor, base.llmConfig.Provider+" enabled"))
+	} else if !isAIMode {
+		fmt.Printf("  LLM:         %s\n", dim(useColor, "disabled"))
+	}
+	fmt.Printf("  Threads:     %d\n", base.threads)
+	fmt.Println()
+}
+
+// logVerbose writes a formatted verbose message to stderr when verbose is true.
+func logVerbose(verbose bool, format string, args ...any) {
+	if verbose {
+		fmt.Fprintf(os.Stderr, "[verbose] "+format+"\n", args...)
+	}
+}
+
+// heading returns text formatted as a bold section heading.
+func heading(useColor bool, text string) string {
+	if useColor {
+		return ColorBold + text + ColorReset
+	}
+	return text
+}
+
+// highlight returns text formatted with purple/highlight color.
+func highlight(useColor bool, text string) string {
+	if useColor {
+		return ColorPurple + text + ColorReset
+	}
+	return text
+}
+
+// dim returns text formatted with dim/muted color.
+func dim(useColor bool, text string) string {
+	if useColor {
+		return ColorDim + text + ColorReset
+	}
+	return text
+}
+
+// errMsg prints a colored error message to stderr.
+func errMsg(useColor bool, format string, args ...any) {
+	if useColor {
+		fmt.Fprintf(os.Stderr, ColorRed+SymbolError+" Error: "+ColorReset+format+"\n", args...)
+	} else {
+		fmt.Fprintf(os.Stderr, "Error: "+format+"\n", args...)
+	}
+}
+
+// warnMsg prints a colored warning message to stderr.
+func warnMsg(useColor bool, format string, args ...any) {
+	if useColor {
+		fmt.Fprintf(os.Stderr, ColorYellow+SymbolWarning+" Warning: "+ColorReset+format+"\n", args...)
+	} else {
+		fmt.Fprintf(os.Stderr, "Warning: "+format+"\n", args...)
+	}
+}
+
+// colorIf returns the ANSI escape code when useColor is true, empty string otherwise.
+func colorIf(useColor bool, code string) string {
+	if useColor {
+		return code
+	}
+	return ""
 }
