@@ -17,6 +17,7 @@ package mongodb
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"time"
 
 	"go.mongodb.org/mongo-driver/mongo"
@@ -73,7 +74,9 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 
 	// Build MongoDB connection string
 	// Format: mongodb://username:password@host/
-	connStr := fmt.Sprintf("mongodb://%s:%s@%s/?%s", username, password, target, tlsParam)
+	// URL-encode username and password to handle special characters (@, :, /, %, #)
+	connStr := fmt.Sprintf("mongodb://%s:%s@%s/?%s",
+		url.QueryEscape(username), url.QueryEscape(password), target, tlsParam)
 
 	// Create client options with timeout
 	clientOpts := options.Client().
