@@ -153,7 +153,7 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 		case ch <- postResult{r, e}:
 			// Successfully sent result
 		case <-timeoutCtx.Done():
-			// Context cancelled while trying to send result - discard it
+			// Context canceled while trying to send result - discard it
 		}
 	}()
 

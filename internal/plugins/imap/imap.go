@@ -132,4 +132,3 @@ func parseTarget(target string) (host, port string) {
 func classifyError(err error) error {
 	return brutus.ClassifyAuthError(err, imapAuthIndicators)
 }
-

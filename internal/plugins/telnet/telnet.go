@@ -300,4 +300,3 @@ func containsAuthFailureIndicator(response string) bool {
 	}
 	return false
 }
-

@@ -27,7 +27,7 @@ import (
 
 var postgresqlAuthIndicators = []string{
 	"password authentication failed",
-	"role \"",              // More specific: 'role "username" does not exist'
+	"role \"", // More specific: 'role "username" does not exist'
 	"does not exist",
 	"no pg_hba.conf entry", // Server config rejects connection for this user/host
 }
@@ -97,7 +97,6 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	result.Duration = time.Since(start)
 	return result
 }
-
 
 // classifyError classifies database errors.
 // Uses shared brutus.ClassifyAuthError with PostgreSQL auth indicators

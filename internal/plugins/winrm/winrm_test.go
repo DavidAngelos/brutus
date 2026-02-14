@@ -17,8 +17,6 @@ package winrm
 import (
 	"context"
 	"errors"
-	"runtime"
-	"strings"
 	"testing"
 	"time"
 
@@ -342,24 +340,4 @@ func TestPlugin_Test_NoGoroutineLeak(t *testing.T) {
 	assert.False(t, result.Success)
 	assert.NotNil(t, result.Error)
 	assert.Contains(t, result.Error.Error(), "connection error")
-}
-
-// countWinRMGoroutines counts goroutines that appear to be from WinRM code
-// (blocking in network operations or Post calls)
-func countWinRMGoroutines() int {
-	buf := make([]byte, 1<<20)
-	stackLen := runtime.Stack(buf, true)
-	stacks := string(buf[:stackLen])
-
-	count := 0
-	// Split by goroutine delimiter
-	goroutines := strings.Split(stacks, "\n\n")
-	for _, g := range goroutines {
-		// Look for goroutines blocked in Post or network operations
-		if strings.Contains(g, "winrm") ||
-			(strings.Contains(g, "net/http") && strings.Contains(g, "Post")) {
-			count++
-		}
-	}
-	return count
 }

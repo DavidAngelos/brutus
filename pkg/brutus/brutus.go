@@ -296,4 +296,3 @@ func Brute(cfg *Config) ([]Result, error) {
 
 	return results, nil
 }
-
