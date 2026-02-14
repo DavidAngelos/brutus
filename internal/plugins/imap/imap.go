@@ -25,6 +25,13 @@ import (
 	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
 
+var imapAuthIndicators = []string{
+	"authentication failed",
+	"authenticate",
+	"invalid credentials",
+	"login failed",
+}
+
 func init() {
 	brutus.Register("imap", func() brutus.Plugin {
 		return &Plugin{}
@@ -125,46 +132,16 @@ func parseTarget(target string) (host, port string) {
 	return target, "143"
 }
 
-// classifyError classifies IMAP connection errors.
-// All connection errors are wrapped as connection errors.
+// classifyError classifies IMAP errors.
+// Uses shared brutus.ClassifyAuthError to distinguish authentication
+// failures from connection errors.
 func classifyError(err error) error {
-	return fmt.Errorf("connection error: %w", err)
+	return brutus.ClassifyAuthError(err, imapAuthIndicators)
 }
 
 // classifyAuthError classifies IMAP authentication errors.
-//
-// Auth failure indicators (return nil):
-// - "authentication failed"
-// - "NO" response (IMAP authentication failure)
-//
-// All other errors are connection problems (return wrapped error).
+// Uses shared brutus.ClassifyAuthError to distinguish authentication
+// failures from connection errors.
 func classifyAuthError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	errStr := strings.ToLower(err.Error())
-
-	// Check for authentication failure indicators
-	authFailures := []string{
-		"authentication failed",
-		"authenticate",
-		"invalid credentials",
-		"login failed",
-	}
-
-	for _, indicator := range authFailures {
-		if strings.Contains(errStr, indicator) {
-			// This is an authentication failure
-			return nil
-		}
-	}
-
-	// Check for IMAP NO response which indicates auth failure
-	if strings.Contains(errStr, "no ") {
-		return nil
-	}
-
-	// All other errors are connection problems
-	return fmt.Errorf("connection error: %w", err)
+	return brutus.ClassifyAuthError(err, imapAuthIndicators)
 }

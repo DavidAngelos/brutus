@@ -27,6 +27,13 @@ import (
 	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
 
+// ldapAuthIndicators identifies LDAP authentication failures.
+// LDAP Result Code 49 is "Invalid Credentials".
+var ldapAuthIndicators = []string{
+	"invalid credentials",
+	"result code 49",
+}
+
 func init() {
 	brutus.Register("ldap", func() brutus.Plugin {
 		return &Plugin{}
@@ -96,19 +103,20 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 		return result
 	}
 
-	// Check if it was an auth error
-	if isAuthError(err) {
+	// Check if it was an auth error (ClassifyAuthError returns nil for auth errors)
+	if classifyError(err) == nil {
 		// Try constructing DN and binding again
 		// Try common DN patterns
 		dnPatterns := []string{
-			fmt.Sprintf("uid=%s,dc=example,dc=com", username),
-			fmt.Sprintf("cn=%s,dc=example,dc=com", username),
-			fmt.Sprintf("uid=%s,ou=users,dc=example,dc=com", username),
-			fmt.Sprintf("cn=%s,ou=users,dc=example,dc=com", username),
+			"uid=%s,dc=example,dc=com",
+			"cn=%s,dc=example,dc=com",
+			"uid=%s,ou=users,dc=example,dc=com",
+			"cn=%s,ou=users,dc=example,dc=com",
 		}
 
 		for _, dn := range dnPatterns {
-			err = conn.Bind(dn, password)
+			formattedDN := fmt.Sprintf(dn, username)
+			err = conn.Bind(formattedDN, password)
 			if err == nil {
 				// Success with DN
 				result.Success = true
@@ -117,7 +125,7 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 			}
 
 			// If not an auth error, break (it's a connection problem)
-			if !isAuthError(err) {
+			if classifyError(err) != nil {
 				break
 			}
 		}
@@ -141,47 +149,10 @@ func parseTarget(target string) (host, port string) {
 	return target, "389"
 }
 
-// isAuthError checks if the error is an authentication error.
-func isAuthError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	errStr := strings.ToLower(err.Error())
-
-	// LDAP Result Code 49 is "Invalid Credentials"
-	authFailures := []string{
-		"invalid credentials",
-		"result code 49",
-	}
-
-	for _, indicator := range authFailures {
-		if strings.Contains(errStr, indicator) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// classifyError classifies LDAP errors.
+// classifyError classifies LDAP errors using the shared brutus helper.
 //
-// Auth failure indicators (return nil):
-// - "Invalid Credentials"
-// - LDAP Result Code 49
-//
-// All other errors are connection problems (return wrapped error).
+// Delegates to brutus.ClassifyAuthError with LDAP-specific auth indicators.
+// Returns nil for authentication failures, wrapped error for connection problems.
 func classifyError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	// Check if it's an authentication failure
-	if isAuthError(err) {
-		// This is an authentication failure, not a connection error
-		return nil
-	}
-
-	// All other errors are connection problems
-	return fmt.Errorf("connection error: %w", err)
+	return brutus.ClassifyAuthError(err, ldapAuthIndicators)
 }
