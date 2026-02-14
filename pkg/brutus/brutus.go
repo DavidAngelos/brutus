@@ -178,14 +178,8 @@ type AnalyzerFactory func(cfg *LLMConfig) BannerAnalyzer
 // Each plugin must implement credential testing for a specific protocol (SSH, FTP, etc.).
 //
 // Optional Key-Based Authentication:
-// Plugins may optionally implement a TestKey method for key-based authentication:
-//
-//	type KeyPlugin interface {
-//	    Plugin
-//	    TestKey(ctx context.Context, target, username string, key []byte, timeout time.Duration) *Result
-//	}
-//
-// If a plugin implements TestKey, the worker pool will automatically use it when
+// Plugins may optionally implement the KeyPlugin interface for key-based authentication.
+// If a plugin implements KeyPlugin, the worker pool will automatically use it when
 // Config.Keys is provided.
 type Plugin interface {
 	// Name returns the protocol name (e.g., "ssh", "ftp").
@@ -200,6 +194,18 @@ type Plugin interface {
 	// The context can be used to cancel the operation early.
 	// The timeout specifies the maximum duration for the authentication attempt.
 	Test(ctx context.Context, target, username, password string, timeout time.Duration) *Result
+}
+
+// KeyPlugin extends Plugin with key-based authentication support.
+//
+// Protocols that support public key authentication (e.g., SSH) can optionally implement
+// this interface. The worker pool will automatically detect and use TestKey when
+// Config.Keys is provided.
+type KeyPlugin interface {
+	Plugin
+
+	// TestKey attempts authentication with username and SSH private key
+	TestKey(ctx context.Context, target, username string, key []byte, timeout time.Duration) *Result
 }
 
 // PluginFactory is a function that creates a new Plugin instance.
@@ -668,10 +674,7 @@ func runWorkersDefault(ctx context.Context, cfg *Config, plug Plugin) ([]Result,
 			if cred.key != nil {
 				// Key-based authentication
 				// Check if plugin supports key auth
-				type keyPlugin interface {
-					TestKey(ctx context.Context, target, username string, key []byte, timeout time.Duration) *Result
-				}
-				if kp, ok := plug.(keyPlugin); ok {
+				if kp, ok := plug.(KeyPlugin); ok {
 					result = kp.TestKey(ctx, cfg.Target, cred.username, cred.key, cfg.Timeout)
 				} else {
 					// Plugin doesn't support key auth, skip
