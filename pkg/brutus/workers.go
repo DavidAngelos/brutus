@@ -109,17 +109,6 @@ func runWorkers(ctx context.Context, cfg *Config, plug Plugin) ([]Result, error)
 	return runWorkersDefault(ctx, cfg, plug)
 }
 
-// isHTTPProtocol returns true if the protocol uses HTTP Basic Auth
-// and can benefit from LLM-based application detection.
-func isHTTPProtocol(protocol string) bool {
-	switch protocol {
-	case "http", "https", "couchdb", "elasticsearch", "influxdb":
-		return true
-	default:
-		return false
-	}
-}
-
 // executeWorkerPool is the shared worker pool implementation used by both
 // runWorkersDefault and runWorkersWithLLM. It handles concurrency control,
 // rate limiting, jitter, max attempts, result collection, and early stopping.
