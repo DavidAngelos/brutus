@@ -56,11 +56,17 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 		Success:  false,
 	}
 
-	// Build URL for CouchDB session endpoint
-	url := fmt.Sprintf("http://%s/_session", target)
-
 	// Read TLS mode from context
 	tlsMode := brutus.TLSModeFromContext(ctx)
+
+	// Determine URL scheme based on TLS mode
+	scheme := "http"
+	if tlsMode == "verify" || tlsMode == "skip-verify" {
+		scheme = "https"
+	}
+
+	// Build URL for CouchDB session endpoint
+	url := fmt.Sprintf("%s://%s/_session", scheme, target)
 
 	// Configure TLS based on mode
 	var tlsConfig *tls.Config
