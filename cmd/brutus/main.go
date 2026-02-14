@@ -44,15 +44,6 @@ var (
 	CommitSHA = "unknown"
 )
 
-// FingerprintxResult represents the JSON output from fingerprintx
-type FingerprintxResult struct {
-	IP        string                 `json:"ip"`
-	Port      int                    `json:"port"`
-	Protocol  string                 `json:"protocol"`
-	Transport string                 `json:"transport"`
-	Metadata  map[string]interface{} `json:"metadata"`
-}
-
 func main() {
 	// Command-line flags
 	target := flag.String("target", "", "Target host:port")
@@ -558,59 +549,6 @@ func runSingleTarget(target, protocol string, base *baseConfigOptions) ([]brutus
 	}
 
 	return results, hasSuccess
-}
-
-// mapServiceToProtocol maps fingerprintx service names to brutus protocol names
-func mapServiceToProtocol(service string) string {
-	// Normalize to lowercase
-	service = strings.ToLower(service)
-
-	// Direct mappings
-	serviceMap := map[string]string{
-		// Network services
-		"ssh":    "ssh",
-		"ftp":    "ftp",
-		"telnet": "telnet",
-		"vnc":    "vnc",
-
-		// Enterprise
-		"smb":  "smb",
-		"ldap": "ldap",
-
-		// Databases
-		"mysql":         "mysql",
-		"postgresql":    "postgresql",
-		"postgres":      "postgresql",
-		"mssql":         "mssql",
-		"mongodb":       "mongodb",
-		"redis":         "redis",
-		"neo4j":         "neo4j",
-		"cassandra":     "cassandra",
-		"couchdb":       "couchdb",
-		"elasticsearch": "elasticsearch",
-		"influxdb":      "influxdb",
-
-		// Communications
-		"smtp": "smtp",
-		"imap": "imap",
-		"pop3": "pop3",
-
-		// SNMP
-		"snmp": "snmp",
-
-		// HTTP - map to our http basic auth plugin
-		"http":  "http",
-		"https": "https",
-
-		// Browser - headless browser for form-based auth
-		"browser": "browser",
-	}
-
-	if proto, ok := serviceMap[service]; ok {
-		return proto
-	}
-
-	return ""
 }
 
 // detectHTTPAuthTypeWithBanner probes an HTTP target to determine the authentication type.
