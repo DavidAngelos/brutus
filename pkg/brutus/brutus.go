@@ -763,7 +763,14 @@ func runWorkersWithLLM(ctx context.Context, cfg *Config, plug Plugin) ([]Result,
 // Uses a dummy credential to trigger the connection and extract banner information.
 func captureBanner(ctx context.Context, cfg *Config, plug Plugin) BannerInfo {
 	// Use first username with empty password for banner capture
-	username := cfg.Usernames[0]
+	// If no usernames provided (only pre-paired Credentials), extract from first Credential
+	var username string
+	if len(cfg.Usernames) > 0 {
+		username = cfg.Usernames[0]
+	} else if len(cfg.Credentials) > 0 {
+		username = cfg.Credentials[0].Username
+	}
+	// Empty username is acceptable for banner capture (some protocols don't need it)
 
 	// Test with dummy credential just to capture banner
 	result := plug.Test(ctx, cfg.Target, username, "", cfg.Timeout)

@@ -15,6 +15,7 @@
 package brutus
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -205,5 +206,49 @@ func TestConfigValidate(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCaptureBanner_EmptyUsernames(t *testing.T) {
+	// Setup: Config with only Credentials (no Usernames), HTTP protocol, LLM enabled
+	cfg := &Config{
+		Target:   "example.com:80",
+		Protocol: "http",
+		Credentials: []Credential{
+			{Username: "admin", Password: "password123"},
+		},
+		Usernames: []string{}, // EMPTY - triggers the bug
+		Timeout:   10 * time.Second,
+		LLMConfig: &LLMConfig{
+			Enabled:  true,
+			Provider: "claude",
+		},
+	}
+
+	// Create mock plugin
+	mockPlugin := &mockHTTPPlugin{}
+
+	// This should NOT panic
+	ctx := context.Background()
+	banner := captureBanner(ctx, cfg, mockPlugin)
+
+	// Should return a valid BannerInfo with empty Banner (not crash)
+	assert.Equal(t, "http", banner.Protocol)
+	assert.Equal(t, "example.com:80", banner.Target)
+	// Banner may be empty, which is fine
+}
+
+type mockHTTPPlugin struct{}
+
+func (m *mockHTTPPlugin) Name() string { return "http" }
+
+func (m *mockHTTPPlugin) Test(ctx context.Context, target, username, password string, timeout time.Duration) *Result {
+	return &Result{
+		Protocol: "http",
+		Target:   target,
+		Username: username,
+		Password: password,
+		Success:  false,
+		Banner:   "HTTP/1.1 401 Unauthorized",
 	}
 }
