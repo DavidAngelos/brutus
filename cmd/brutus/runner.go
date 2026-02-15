@@ -16,10 +16,13 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/praetorian-inc/brutus/internal/plugins/snmp"
 	"github.com/praetorian-inc/brutus/pkg/brutus"
@@ -145,8 +148,12 @@ func runSingleTarget(target, protocol, tlsMode string, base *baseConfigOptions, 
 		totalAttempts, config.Threads, config.Timeout)
 	logVerbose(base.verbose, "Starting brute force...")
 
-	// Run brute force
-	results, err := brutus.Brute(config)
+	// Create context that cancels on SIGINT/SIGTERM
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Run brute force with context
+	results, err := brutus.BruteWithContext(ctx, config)
 	if err != nil {
 		errMsg(base.useColor, "testing %s: %v", target, err)
 		return nil, false

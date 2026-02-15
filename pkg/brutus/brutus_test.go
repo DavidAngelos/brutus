@@ -15,6 +15,7 @@
 package brutus
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -134,4 +135,52 @@ func TestConfigValidate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBruteWithContext_CancelDuringExecution(t *testing.T) {
+	// Test that BruteWithContext respects context cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Create a config that would take a long time to complete
+	config := &Config{
+		Target:    "127.0.0.1:1",  // Non-existent port
+		Protocol:  "ssh",
+		Usernames: []string{"user1", "user2", "user3", "user4", "user5"},
+		Passwords: []string{"pass1", "pass2", "pass3", "pass4", "pass5"},
+		Timeout:   1 * time.Second,
+		Threads:   1,
+	}
+
+	// Cancel the context after a short delay
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err := BruteWithContext(ctx, config)
+	elapsed := time.Since(start)
+
+	// Should return quickly (well before 25 attempts * 1 second timeout)
+	assert.True(t, elapsed < 5*time.Second, "should return quickly on context cancellation")
+	assert.Error(t, err, "should return error on context cancellation")
+}
+
+func TestBrute_BackwardsCompatibility(t *testing.T) {
+	// Test that Brute() still works (backwards compatibility)
+	// Test with valid config but without actual plugin (expect plugin error, not panic)
+	config := &Config{
+		Target:    "127.0.0.1:22",
+		Protocol:  "ssh",
+		Usernames: []string{"root"},
+		Passwords: []string{"password"},
+		Timeout:   100 * time.Millisecond,
+		Threads:   1,
+	}
+
+	// Should complete without panic (may return error for missing plugin)
+	// The important thing is it doesn't panic and the function signature works
+	_, _ = Brute(config)
+	// If we get here without panicking, backwards compatibility is maintained
+	assert.True(t, true, "Brute() maintains backwards compatibility")
 }

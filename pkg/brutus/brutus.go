@@ -37,6 +37,18 @@
 //	    }
 //	}
 //
+// Context-Aware Usage:
+//
+// For cancellable operations, use BruteWithContext:
+//
+//	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+//	defer cancel()
+//
+//	results, err := brutus.BruteWithContext(ctx, config)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
 // Error Handling:
 //
 // Results distinguish between authentication failures (invalid credentials)
@@ -265,11 +277,12 @@ func (c *Config) validate() error {
 // Brute Force Execution
 // =============================================================================
 
-// Brute executes a brute force attack using the provided configuration.
+// BruteWithContext executes a brute force attack using the provided configuration and context.
 //
+// The context can be used to cancel the operation early via context cancellation.
 // The plugin is resolved once via GetPlugin and shared across all worker goroutines.
 // See the Plugin interface documentation for thread-safety requirements.
-func Brute(cfg *Config) ([]Result, error) {
+func BruteWithContext(ctx context.Context, cfg *Config) ([]Result, error) {
 	// 1. Validate configuration
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
@@ -287,12 +300,22 @@ func Brute(cfg *Config) ([]Result, error) {
 		}
 	}
 
-	// 3. Run worker pool
-	ctx := context.Background()
+	// 3. Run worker pool with provided context
 	results, err := runWorkers(ctx, cfg, plug)
 	if err != nil {
 		return results, fmt.Errorf("brute force failed: %w", err)
 	}
 
 	return results, nil
+}
+
+// Brute executes a brute force attack using the provided configuration.
+//
+// This is a convenience wrapper around BruteWithContext that uses context.Background().
+// For cancellable operations, use BruteWithContext directly.
+//
+// The plugin is resolved once via GetPlugin and shared across all worker goroutines.
+// See the Plugin interface documentation for thread-safety requirements.
+func Brute(cfg *Config) ([]Result, error) {
+	return BruteWithContext(context.Background(), cfg)
 }
