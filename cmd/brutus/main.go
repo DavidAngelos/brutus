@@ -37,38 +37,44 @@ var (
 )
 
 // setupAIConfig creates the LLM configuration for AI mode.
-func setupAIConfig(aiMode bool, anthropicKey, perplexityKey string) *brutus.LLMConfig {
+func setupAIConfig(aiMode bool, anthropicKey, perplexityKey string) (*brutus.LLMConfig, error) {
 	if !aiMode {
-		return nil
+		return nil, nil
 	}
 	if anthropicKey == "" {
-		fmt.Fprintf(os.Stderr, "Error: --experimental-ai requires ANTHROPIC_API_KEY for Claude Vision (screenshot analysis)\n")
-		fmt.Fprintf(os.Stderr, "       PERPLEXITY_API_KEY is optional for additional web search\n")
-		os.Exit(1)
+		return nil, fmt.Errorf("--experimental-ai requires ANTHROPIC_API_KEY for Claude Vision (screenshot analysis)\n       PERPLEXITY_API_KEY is optional for additional web search")
 	}
 	if perplexityKey != "" {
-		return &brutus.LLMConfig{Enabled: true, Provider: "perplexity", APIKey: perplexityKey}
+		return &brutus.LLMConfig{Enabled: true, Provider: "perplexity", APIKey: perplexityKey}, nil
 	}
-	return &brutus.LLMConfig{Enabled: true, Provider: "claude-vision", APIKey: anthropicKey}
+	return &brutus.LLMConfig{Enabled: true, Provider: "claude-vision", APIKey: anthropicKey}, nil
 }
 
 // setupOutputWriter configures the JSON output writer and returns a cleanup function.
-func setupOutputWriter(outputFile string, jsonOutput *bool) (io.Writer, func()) {
+func setupOutputWriter(outputFile string) (io.Writer, bool, func(), error) {
 	if outputFile == "" {
-		return os.Stdout, func() {}
+		return os.Stdout, false, func() {}, nil
 	}
 	f, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
-		os.Exit(1)
+		return nil, false, nil, fmt.Errorf("creating output file: %w", err)
 	}
-	*jsonOutput = true
-	return f, func() { f.Close() }
+	return f, true, func() { f.Close() }, nil
 }
 
 // shouldShowBanner determines whether to display the ASCII art banner.
 func shouldShowBanner(showBanner, jsonOutput, stdinMode, quiet, useColor bool) bool {
 	return showBanner && !jsonOutput && !stdinMode && !quiet && useColor
+}
+
+// detectStdinMode returns true if stdin mode should be used (explicit flag or piped data without target).
+func detectStdinMode(stdinFlag bool, target string) bool {
+	return stdinFlag || (target == "" && hasStdinData())
+}
+
+// isColorEnabled returns true if colored output should be used.
+func isColorEnabled(noColor bool) bool {
+	return !noColor && isTerminal()
 }
 
 func main() {
@@ -121,7 +127,7 @@ func main() {
 	})
 
 	// Detect terminal and configure colors
-	useColor := !*noColor && isTerminal()
+	useColor := isColorEnabled(*noColor)
 
 	// Show version and exit
 	if *showVersion {
@@ -130,7 +136,7 @@ func main() {
 	}
 
 	// Auto-detect stdin mode: if stdin has data and no target specified, use stdin mode
-	useStdin := *stdinMode || (*target == "" && hasStdinData())
+	useStdin := detectStdinMode(*stdinMode, *target)
 
 	// Show banner (unless in JSON mode, stdin mode, or quiet mode)
 	if shouldShowBanner(*showBanner, *jsonOutput, useStdin, *quiet, useColor) {
@@ -141,7 +147,11 @@ func main() {
 	perplexityKey := os.Getenv("PERPLEXITY_API_KEY")
 	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
 
-	aiLLMConfig := setupAIConfig(*aiMode, anthropicKey, perplexityKey)
+	aiLLMConfig, err := setupAIConfig(*aiMode, anthropicKey, perplexityKey)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Determine if badkeys should be used (--no-badkeys overrides --badkeys)
 	useBadkeys := *badkeys && !*noBadkeys
@@ -153,7 +163,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	jsonWriter, closeOutput := setupOutputWriter(*outputFile, jsonOutput)
+	jsonWriter, forceJSON, closeOutput, err := setupOutputWriter(*outputFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if forceJSON {
+		*jsonOutput = true
+	}
 
 	// Prepare common config options
 	baseConfig := baseConfigOptions{
@@ -191,7 +208,13 @@ func main() {
 	if useStdin {
 		allResults, hasSuccess = runFromStdin(&baseConfig, *jsonOutput)
 	} else {
-		allResults, hasSuccess = runSingleTargetMode(*target, *protocol, &baseConfig, *jsonOutput, jsonWriter, closeOutput)
+		if err := validateTargetFlags(*target, *protocol); err != nil {
+			errMsg(useColor, "%v", err)
+			flag.Usage()
+			closeOutput()
+			os.Exit(1)
+		}
+		allResults, hasSuccess = runSingleTargetMode(*target, *protocol, &baseConfig, *jsonOutput, jsonWriter)
 	}
 
 	// Final JSON output for stdin mode
@@ -207,21 +230,7 @@ func main() {
 }
 
 // runSingleTargetMode handles the single-target execution path.
-func runSingleTargetMode(target, protocol string, baseConfig *baseConfigOptions, jsonOutput bool, jsonWriter io.Writer, closeOutput func()) ([]brutus.Result, bool) {
-	if target == "" {
-		errMsg(baseConfig.useColor, "--target is required (or pipe data to stdin)")
-		flag.Usage()
-		closeOutput()
-		os.Exit(1)
-	}
-
-	if protocol == "" {
-		errMsg(baseConfig.useColor, "--protocol is required when using --target")
-		fmt.Fprintf(os.Stderr, "Example: brutus --target %s --protocol ssh\n", target)
-		closeOutput()
-		os.Exit(1)
-	}
-
+func runSingleTargetMode(target, protocol string, baseConfig *baseConfigOptions, jsonOutput bool, jsonWriter io.Writer) ([]brutus.Result, bool) {
 	// AI mode for single target with HTTP protocol
 	var aiCreds []brutus.Credential
 	if baseConfig.aiMode && (protocol == "http" || protocol == "https") {
@@ -243,6 +252,17 @@ func runSingleTargetMode(target, protocol string, baseConfig *baseConfigOptions,
 	}
 
 	return results, success
+}
+
+// validateTargetFlags checks that required flags are provided for single-target mode.
+func validateTargetFlags(target, protocol string) error {
+	if target == "" {
+		return fmt.Errorf("--target is required (or pipe data to stdin)")
+	}
+	if protocol == "" {
+		return fmt.Errorf("--protocol is required when using --target\nExample: brutus --target %s --protocol ssh", target)
+	}
+	return nil
 }
 
 // hasStdinData checks if stdin has data available (i.e., is being piped to)
