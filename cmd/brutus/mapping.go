@@ -39,8 +39,9 @@ func mapServiceToProtocol(service string) string {
 		"vnc":    "vnc",
 
 		// Enterprise
-		"smb":  "smb",
-		"ldap": "ldap",
+		"smb":   "smb",
+		"ldap":  "ldap",
+		"winrm": "winrm",
 
 		// Databases
 		"mysql":         "mysql",

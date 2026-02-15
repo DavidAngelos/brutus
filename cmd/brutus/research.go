@@ -68,6 +68,7 @@ func detectHTTPAuthTypeWithBanner(target string, useHTTPS bool, timeout time.Dur
 			return http.ErrUseLastResponse
 		},
 	}
+	defer client.CloseIdleConnections()
 
 	req, err := http.NewRequest("GET", url, http.NoBody)
 	if err != nil {
