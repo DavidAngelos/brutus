@@ -25,6 +25,8 @@ import (
 	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
 
+var pop3AuthIndicators = []string{"-ERR", "-err"}
+
 func init() {
 	brutus.Register("pop3", func() brutus.Plugin {
 		return &Plugin{}
@@ -148,6 +150,9 @@ func readResponse(reader *bufio.Reader) (string, error) {
 // classifyError classifies TCP dial errors.
 // All dial errors are connection errors.
 func classifyError(err error) error {
+	if err == nil {
+		return nil
+	}
 	return fmt.Errorf("connection error: %w", err)
 }
 
@@ -158,18 +163,5 @@ func classifyError(err error) error {
 //
 // All other errors are connection problems (return wrapped error).
 func classifyAuthError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	errStr := err.Error()
-
-	// Check for POP3 -ERR response (authentication failure)
-	if strings.Contains(errStr, "-ERR") || strings.Contains(errStr, "-err") {
-		// This is an authentication failure, not a connection error
-		return nil
-	}
-
-	// All other errors are connection problems
-	return fmt.Errorf("connection error: %w", err)
+	return brutus.ClassifyAuthError(err, pop3AuthIndicators)
 }

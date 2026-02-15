@@ -315,22 +315,7 @@ func looksLikeLoginSuccess(html string) bool {
 
 	// Check for visible error patterns (not just CSS classes which may be hidden)
 	// These are typically shown in visible text when login fails
-	errorPatterns := []string{
-		"invalid password",
-		"invalid credentials",
-		"incorrect password",
-		"login failed",
-		"authentication failed",
-		"access denied",
-		"wrong password",
-		"invalid username",
-		"user not found",
-		"bad credentials",
-		"try again",
-		"please enter",
-	}
-
-	for _, pattern := range errorPatterns {
+	for _, pattern := range LoginErrorPatterns {
 		if strings.Contains(html, pattern) {
 			return false
 		}
@@ -338,19 +323,7 @@ func looksLikeLoginSuccess(html string) bool {
 
 	// Check for success indicators (dashboard, settings, logout, etc.)
 	// These indicate we've moved past the login page
-	successPatterns := []string{
-		"logout",
-		"log out",
-		"sign out",
-		"signout",
-		"dashboard",
-		"welcome",
-		"configuration",
-		"status",
-		"device status",
-	}
-
-	for _, pattern := range successPatterns {
+	for _, pattern := range LoginSuccessPatterns {
 		if strings.Contains(html, pattern) {
 			return true
 		}

@@ -26,6 +26,11 @@ import (
 	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
 
+var smbAuthIndicators = []string{
+	"STATUS_LOGON_FAILURE",
+	"authentication failed",
+}
+
 func init() {
 	brutus.Register("smb", func() brutus.Plugin {
 		return &Plugin{}
@@ -112,14 +117,9 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 
 // parseTarget splits target into host and port.
 // If no port is specified, defaults to 445 (SMB).
+// Supports IPv6 addresses with brackets: [::1]:445
 func parseTarget(target string) (host, port string) {
-	// Check if target contains port
-	if strings.Contains(target, ":") {
-		parts := strings.SplitN(target, ":", 2)
-		return parts[0], parts[1]
-	}
-	// Default to port 445 if not specified
-	return target, "445"
+	return brutus.ParseTarget(target, "445")
 }
 
 // parseDomainUsername splits username into domain and username.
@@ -135,33 +135,7 @@ func parseDomainUsername(username string) (domain, user string) {
 	return "", username
 }
 
-// classifyError classifies SMB errors.
-//
-// Auth failure indicators (return nil):
-// - "STATUS_LOGON_FAILURE"
-// - "authentication failed"
-//
-// All other errors are connection problems (return wrapped error).
+// classifyError classifies SMB errors using the shared brutus helper.
 func classifyError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	errStr := err.Error()
-
-	// Check for authentication failure indicators
-	authFailures := []string{
-		"STATUS_LOGON_FAILURE",
-		"authentication failed",
-	}
-
-	for _, indicator := range authFailures {
-		if strings.Contains(errStr, indicator) {
-			// This is an authentication failure, not a connection error
-			return nil
-		}
-	}
-
-	// All other errors are connection problems
-	return fmt.Errorf("connection error: %w", err)
+	return brutus.ClassifyAuthError(err, smbAuthIndicators)
 }

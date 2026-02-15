@@ -17,13 +17,21 @@ package redis
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
 	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
+
+var redisAuthIndicators = []string{
+	"noauth",
+	"wrongpass",
+	"invalid password",
+	"err invalid password", // Some Redis versions prefix with ERR
+	"err client sent auth", // Auth not enabled on server
+	"without any password", // No password configured
+}
 
 func init() {
 	brutus.Register("redis", func() brutus.Plugin {
@@ -58,7 +66,7 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	}
 
 	// Parse target to extract host and port
-	host, port := parseTarget(target)
+	host, port := brutus.ParseTarget(target, "6379")
 	addr := fmt.Sprintf("%s:%s", host, port)
 
 	// Create Redis client
@@ -90,47 +98,14 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	return result
 }
 
-// parseTarget splits target into host and port.
-// If no port is specified, defaults to 6379.
-func parseTarget(target string) (host, port string) {
-	// Check if target contains port
-	if strings.Contains(target, ":") {
-		parts := strings.SplitN(target, ":", 2)
-		return parts[0], parts[1]
-	}
-	// Default to port 6379 if not specified
-	return target, "6379"
-}
-
-// classifyError classifies Redis errors.
+// classifyError classifies Redis errors using the shared auth error classifier.
 //
 // Auth failure indicators (return nil):
-// - "NOAUTH Authentication required"
-// - "WRONGPASS invalid username-password pair"
+// - "noauth"
+// - "wrongpass"
 // - "invalid password"
 //
 // All other errors are connection problems (return wrapped error).
 func classifyError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	errStr := strings.ToLower(err.Error())
-
-	// Check for authentication failure indicators
-	authFailures := []string{
-		"noauth",
-		"wrongpass",
-		"invalid password",
-	}
-
-	for _, indicator := range authFailures {
-		if strings.Contains(errStr, indicator) {
-			// This is an authentication failure, not a connection error
-			return nil
-		}
-	}
-
-	// All other errors are connection problems
-	return fmt.Errorf("connection error: %w", err)
+	return brutus.ClassifyAuthError(err, redisAuthIndicators)
 }

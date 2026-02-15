@@ -83,24 +83,7 @@ func VerifyLogin(before, after VerificationState) VerificationResult {
 func detectErrorMessage(html string) bool {
 	lower := strings.ToLower(html)
 
-	errorPatterns := []string{
-		"invalid password",
-		"incorrect password",
-		"wrong password",
-		"invalid credentials",
-		"incorrect credentials",
-		"authentication failed",
-		"login failed",
-		"access denied",
-		"invalid username",
-		"user not found",
-		"bad credentials",
-		`class="error"`,
-		`class='error'`,
-		`id="error"`,
-	}
-
-	for _, pattern := range errorPatterns {
+	for _, pattern := range LoginErrorPatterns {
 		if strings.Contains(lower, pattern) {
 			return true
 		}
@@ -117,20 +100,7 @@ func urlIndicatesSuccess(beforeURL, afterURL string) bool {
 
 	afterLower := strings.ToLower(afterURL)
 
-	successPaths := []string{
-		"/dashboard",
-		"/admin",
-		"/home",
-		"/main",
-		"/index",
-		"/welcome",
-		"/console",
-		"/panel",
-		"/status",
-		"/overview",
-	}
-
-	for _, path := range successPaths {
+	for _, path := range URLSuccessPaths {
 		if strings.Contains(afterLower, path) {
 			return true
 		}
@@ -159,20 +129,7 @@ func hasPasswordField(html string) bool {
 func detectSuccessIndicators(html string) bool {
 	lower := strings.ToLower(html)
 
-	indicators := []string{
-		"welcome",
-		"logged in",
-		"dashboard",
-		"logout",
-		"sign out",
-		"log out",
-		"my account",
-		"settings",
-		"configuration",
-		"system status",
-	}
-
-	for _, ind := range indicators {
+	for _, ind := range LoginSuccessPatterns {
 		if strings.Contains(lower, ind) {
 			return true
 		}

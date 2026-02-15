@@ -18,13 +18,17 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 
 	_ "github.com/denisenkom/go-mssqldb"
 
 	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
+
+// mssqlAuthIndicators contains strings that indicate authentication failures.
+var mssqlAuthIndicators = []string{
+	"Login failed for user",
+}
 
 func init() {
 	brutus.Register("mssql", func() brutus.Plugin {
@@ -85,7 +89,7 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	// Test connection with ping
 	err = db.PingContext(pingCtx)
 	if err != nil {
-		result.Error = classifyError(err)
+		result.Error = brutus.ClassifyAuthError(err, mssqlAuthIndicators)
 		result.Duration = time.Since(start)
 		return result
 	}
@@ -94,33 +98,4 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	result.Success = true
 	result.Duration = time.Since(start)
 	return result
-}
-
-// classifyError classifies MSSQL errors.
-//
-// Auth failure indicators (return nil):
-// - "Login failed for user"
-//
-// All other errors are connection problems (return wrapped error).
-func classifyError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	errStr := err.Error()
-
-	// Check for authentication failure indicators
-	authFailures := []string{
-		"Login failed for user",
-	}
-
-	for _, indicator := range authFailures {
-		if strings.Contains(errStr, indicator) {
-			// This is an authentication failure, not a connection error
-			return nil
-		}
-	}
-
-	// All other errors are connection problems
-	return fmt.Errorf("connection error: %w", err)
 }

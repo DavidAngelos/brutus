@@ -56,8 +56,17 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 		Success:  false,
 	}
 
+	// Read TLS mode from context
+	tlsMode := brutus.TLSModeFromContext(ctx)
+
+	// Determine URL scheme based on TLS mode
+	scheme := "http"
+	if tlsMode == "verify" || tlsMode == "skip-verify" {
+		scheme = "https"
+	}
+
 	// Build URL for cluster info endpoint
-	url := fmt.Sprintf("http://%s/", target)
+	url := fmt.Sprintf("%s://%s/", scheme, target)
 
 	// Create HTTP request
 	req, err := http.NewRequestWithContext(ctx, "GET", url, http.NoBody)
@@ -70,11 +79,26 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	// Set Basic Auth
 	req.SetBasicAuth(username, password)
 
-	// Create HTTP client with timeout and TLS config to skip cert verification
+	// Configure TLS based on mode
+	var tlsConfig *tls.Config
+	switch tlsMode {
+	case "verify":
+		tlsConfig = &tls.Config{
+			InsecureSkipVerify: false, // Full certificate verification
+		}
+	case "skip-verify":
+		tlsConfig = &tls.Config{
+			InsecureSkipVerify: true, // Allow self-signed certs
+		}
+	default: // "disable"
+		tlsConfig = nil // No TLS
+	}
+
+	// Create HTTP client with timeout and TLS config
 	client := &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig: tlsConfig,
 		},
 	}
 
