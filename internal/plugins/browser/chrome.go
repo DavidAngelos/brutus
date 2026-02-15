@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/chromedp/chromedp"
@@ -17,7 +18,7 @@ var (
 	browserInstance *Browser
 	browserErr      error
 	browserMu       sync.Mutex
-	browserVisible  bool // Global flag for visible mode (set before first GetBrowser call)
+	browserVisible  atomic.Bool // Global flag for visible mode (set before first GetBrowser call)
 )
 
 // Browser manages a Chrome instance with a pool of tabs
@@ -32,13 +33,13 @@ type Browser struct {
 
 // SetBrowserVisible sets whether the browser should be visible (must be called before GetBrowser)
 func SetBrowserVisible(visible bool) {
-	browserVisible = visible
+	browserVisible.Store(visible)
 }
 
 // GetBrowser returns the singleton browser instance
 func GetBrowser(tabCount int) (*Browser, error) {
 	browserOnce.Do(func() {
-		browserInstance, browserErr = startBrowser(tabCount, browserVisible)
+		browserInstance, browserErr = startBrowser(tabCount, browserVisible.Load())
 	})
 	return browserInstance, browserErr
 }
