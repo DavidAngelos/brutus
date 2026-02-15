@@ -182,6 +182,15 @@ func executeWorkerPool(ctx context.Context, cfg *Config, plug Plugin, credential
 				attemptMu.Unlock()
 			}
 
+			// Re-check context before expensive network call to close
+			// TOCTOU window in StopOnSuccess (cancel may have fired
+			// during rate limiting or jitter)
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+			}
+
 			// Test credential (key-based or password-based)
 			var result *Result
 			if cred.key != nil {
