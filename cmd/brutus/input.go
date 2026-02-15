@@ -21,7 +21,7 @@ import (
 	"strings"
 )
 
-func loadPasswords(inline, file string, inlineFlagSet bool) []string {
+func loadPasswords(inline, file string, inlineFlagSet bool) ([]string, error) {
 	var passwords []string
 
 	// Load from inline flag
@@ -33,8 +33,7 @@ func loadPasswords(inline, file string, inlineFlagSet bool) []string {
 	if file != "" {
 		f, err := os.Open(file)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error opening password file: %v\n", err)
-			os.Exit(1)
+			return nil, fmt.Errorf("opening password file: %w", err)
 		}
 
 		scanner := bufio.NewScanner(f)
@@ -58,36 +57,32 @@ func loadPasswords(inline, file string, inlineFlagSet bool) []string {
 		f.Close()
 
 		if scanErr != nil {
-			fmt.Fprintf(os.Stderr, "Error reading password file: %v\n", scanErr)
-			os.Exit(1)
+			return nil, fmt.Errorf("reading password file: %w", scanErr)
 		}
 	}
 
-	return passwords
+	return passwords, nil
 }
 
-func loadKey(keyFile string) [][]byte {
+func loadKey(keyFile string) ([][]byte, error) {
 	if keyFile == "" {
-		return nil
+		return nil, nil
 	}
 
 	// Check file size to prevent OOM from excessively large files
 	info, err := os.Stat(keyFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error accessing key file %s: %v\n", keyFile, err)
-		os.Exit(1)
+		return nil, fmt.Errorf("accessing key file %s: %w", keyFile, err)
 	}
 	const maxKeyFileSize = 1 << 20 // 1MB - generous limit for SSH/TLS keys
 	if info.Size() > maxKeyFileSize {
-		fmt.Fprintf(os.Stderr, "Error: key file %s is %d bytes (max %d bytes)\n", keyFile, info.Size(), maxKeyFileSize)
-		os.Exit(1)
+		return nil, fmt.Errorf("key file %s is %d bytes (max %d bytes)", keyFile, info.Size(), maxKeyFileSize)
 	}
 
 	key, err := os.ReadFile(keyFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading key file %s: %v\n", keyFile, err)
-		os.Exit(1)
+		return nil, fmt.Errorf("reading key file %s: %w", keyFile, err)
 	}
 
-	return [][]byte{key}
+	return [][]byte{key}, nil
 }

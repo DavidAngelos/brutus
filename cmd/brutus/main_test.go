@@ -28,7 +28,8 @@ import (
 func TestLoadPasswords_EmptyPassword(t *testing.T) {
 	// Test: -p '' (flag explicitly set to empty string)
 	// Expected: should include empty password in the list
-	passwords := loadPasswords("", "", true)
+	passwords, err := loadPasswords("", "", true)
+	require.NoError(t, err)
 	require.Len(t, passwords, 1, "should have exactly one password (empty)")
 	assert.Equal(t, "", passwords[0], "password should be empty string")
 }
@@ -38,7 +39,8 @@ func TestLoadPasswords_EmptyPassword(t *testing.T) {
 func TestLoadPasswords_NoFlag(t *testing.T) {
 	// Test: flag not set (default empty string, but flag not explicitly provided)
 	// Expected: should return empty list (no passwords)
-	passwords := loadPasswords("", "", false)
+	passwords, err := loadPasswords("", "", false)
+	require.NoError(t, err)
 	assert.Empty(t, passwords, "should have no passwords when flag not set")
 }
 
@@ -57,7 +59,8 @@ password123
 	require.NoError(t, err)
 
 	// Test loading passwords from file
-	passwords := loadPasswords("", passwordFile, false)
+	passwords, err := loadPasswords("", passwordFile, false)
+	require.NoError(t, err)
 	require.Len(t, passwords, 3, "should have 3 passwords")
 	assert.Equal(t, "admin", passwords[0])
 	assert.Equal(t, "", passwords[1], "second password should be empty (from <EMPTY> marker)")
@@ -79,7 +82,8 @@ password123
 	require.NoError(t, err)
 
 	// Test loading passwords from file
-	passwords := loadPasswords("", passwordFile, false)
+	passwords, err := loadPasswords("", passwordFile, false)
+	require.NoError(t, err)
 	require.Len(t, passwords, 3, "should have 3 passwords including empty line")
 	assert.Equal(t, "admin", passwords[0])
 	assert.Equal(t, "", passwords[1], "second password should be empty (from empty line)")
@@ -101,7 +105,8 @@ password123
 	require.NoError(t, err)
 
 	// Test loading passwords from file
-	passwords := loadPasswords("", passwordFile, false)
+	passwords, err := loadPasswords("", passwordFile, false)
+	require.NoError(t, err)
 	require.Len(t, passwords, 2, "should have 2 passwords (comments skipped)")
 	assert.Equal(t, "admin", passwords[0])
 	assert.Equal(t, "password123", passwords[1])
@@ -110,7 +115,8 @@ password123
 // TestLoadPasswords_InlineWithCommaSeparated tests comma-separated inline passwords
 func TestLoadPasswords_InlineWithCommaSeparated(t *testing.T) {
 	// Test normal comma-separated passwords
-	passwords := loadPasswords("admin,password,test123", "", true)
+	passwords, err := loadPasswords("admin,password,test123", "", true)
+	require.NoError(t, err)
 	require.Len(t, passwords, 3)
 	assert.Equal(t, "admin", passwords[0])
 	assert.Equal(t, "password", passwords[1])
@@ -130,10 +136,23 @@ file2
 	require.NoError(t, err)
 
 	// Test combining inline and file
-	passwords := loadPasswords("inline1,inline2", passwordFile, true)
+	passwords, err := loadPasswords("inline1,inline2", passwordFile, true)
+	require.NoError(t, err)
 	require.Len(t, passwords, 4)
 	assert.Equal(t, "inline1", passwords[0])
 	assert.Equal(t, "inline2", passwords[1])
 	assert.Equal(t, "file1", passwords[2])
 	assert.Equal(t, "file2", passwords[3])
+}
+
+func TestLoadPasswords_FileNotFound(t *testing.T) {
+	_, err := loadPasswords("", "/nonexistent/file.txt", false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "opening password file")
+}
+
+func TestLoadKey_FileNotFound(t *testing.T) {
+	_, err := loadKey("/nonexistent/key.pem")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "accessing key file")
 }

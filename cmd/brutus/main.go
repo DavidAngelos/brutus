@@ -57,7 +57,7 @@ func setupOutputWriter(outputFile string) (io.Writer, bool, func(), error) {
 	}
 	f, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		return nil, false, nil, fmt.Errorf("creating output file: %w", err)
+		return nil, false, func() {}, fmt.Errorf("creating output file: %w", err)
 	}
 	return f, true, func() { f.Close() }, nil
 }
@@ -149,34 +149,44 @@ func main() {
 
 	aiLLMConfig, err := setupAIConfig(*aiMode, anthropicKey, perplexityKey)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		errMsg(useColor, "%v", err)
 		os.Exit(1)
 	}
 
 	// Determine if badkeys should be used (--no-badkeys overrides --badkeys)
-	useBadkeys := *badkeys && !*noBadkeys
+	useBadkeys := resolveBadkeys(*badkeys, *noBadkeys)
 
 	// Validate: -k requires explicit -u (not default usernames)
-	if *keyFile != "" && *usernames == "root,admin" {
-		fmt.Fprintf(os.Stderr, "Error: -k requires -u to specify which username(s) to test with the key\n")
-		fmt.Fprintf(os.Stderr, "Example: brutus --target host:22 --protocol ssh -u vagrant -k mykey.pem\n")
+	if err := validateKeyFileFlags(*keyFile, *usernames); err != nil {
+		errMsg(useColor, "%v", err)
 		os.Exit(1)
 	}
 
 	jsonWriter, forceJSON, closeOutput, err := setupOutputWriter(*outputFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		errMsg(useColor, "%v", err)
 		os.Exit(1)
 	}
 	if forceJSON {
 		*jsonOutput = true
 	}
 
+	passwordList, err := loadPasswords(*passwords, *passwordFile, passwordFlagSet)
+	if err != nil {
+		errMsg(useColor, "%v", err)
+		os.Exit(1)
+	}
+	keyList, err := loadKey(*keyFile)
+	if err != nil {
+		errMsg(useColor, "%v", err)
+		os.Exit(1)
+	}
+
 	// Prepare common config options
 	baseConfig := baseConfigOptions{
 		usernames:        strings.Split(*usernames, ","),
-		passwords:        loadPasswords(*passwords, *passwordFile, passwordFlagSet),
-		keys:             loadKey(*keyFile),
+		passwords:        passwordList,
+		keys:             keyList,
 		threads:          *threads,
 		timeout:          *timeout,
 		stopOnSuccess:    *stopOnSuccess,
@@ -252,6 +262,19 @@ func runSingleTargetMode(target, protocol string, baseConfig *baseConfigOptions,
 	}
 
 	return results, success
+}
+
+// resolveBadkeys determines if bad SSH keys should be tested (--no-badkeys overrides --badkeys).
+func resolveBadkeys(badkeys, noBadkeys bool) bool {
+	return badkeys && !noBadkeys
+}
+
+// validateKeyFileFlags checks that -k is used with explicit -u.
+func validateKeyFileFlags(keyFile, usernames string) error {
+	if keyFile != "" && usernames == "root,admin" {
+		return fmt.Errorf("-k requires -u to specify which username(s) to test with the key\nExample: brutus --target host:22 --protocol ssh -u vagrant -k mykey.pem")
+	}
+	return nil
 }
 
 // validateTargetFlags checks that required flags are provided for single-target mode.
