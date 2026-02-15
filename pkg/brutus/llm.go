@@ -37,6 +37,13 @@ const (
 	MaxPasswordLength = 32
 )
 
+var (
+	// ansiRegex matches ANSI escape codes for removal
+	ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	// allowedPattern matches safe password characters
+	allowedPattern = regexp.MustCompile(`^[a-zA-Z0-9!@#$%^&*()\-_=+\[\]{}]+$`)
+)
+
 // createAnalyzer creates the appropriate LLM analyzer based on provider configuration.
 // Returns nil if provider is unknown or configuration is invalid.
 // Analyzers must register themselves using RegisterAnalyzer() in their init() functions.
@@ -95,7 +102,6 @@ func SanitizeBanner(banner string) string {
 	cleaned := strings.ReplaceAll(banner, "\x00", "")
 
 	// 2. Remove ANSI escape codes
-	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*m`)
 	cleaned = ansiRegex.ReplaceAllString(cleaned, "")
 
 	// 3. Remove triple quotes (prevent prompt escape)
@@ -136,6 +142,5 @@ func ValidateSuggestions(passwords []string) []string {
 // IsValidPassword checks for safe characters
 func IsValidPassword(pwd string) bool {
 	// Allow: a-zA-Z0-9 and common symbols: !@#$%^&*()-_=+[]{}
-	allowedPattern := regexp.MustCompile(`^[a-zA-Z0-9!@#$%^&*()\-_=+\[\]{}]+$`)
 	return allowedPattern.MatchString(pwd)
 }
