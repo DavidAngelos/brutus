@@ -203,7 +203,13 @@ impl ConnectorHandle {
 
             // If the connector needs input, call step with input.
             // Otherwise use step_no_input to generate outbound data.
-            let _written = if current_input.is_empty() && !self.needs_input {
+            // When needs_input is true but we have no data yet, tell Go to
+            // read from the server first (NEED_RECV) instead of passing
+            // empty bytes to IronRDP which would cause a decode error.
+            let _written = if current_input.is_empty() && self.needs_input {
+                // We expect server data but Go hasn't provided it yet.
+                return Ok((STATE_NEED_RECV, Vec::new()));
+            } else if current_input.is_empty() {
                 self.connector
                     .step_no_input(&mut output)
                     .map_err(|e| self.classify_connector_error(&e))?
