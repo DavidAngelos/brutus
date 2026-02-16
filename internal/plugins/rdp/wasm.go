@@ -102,6 +102,9 @@ func initEngine() (*wasmEngine, error) {
 			NewFunctionBuilder().
 			WithFunc(hostLog).
 			Export("host_log").
+			NewFunctionBuilder().
+			WithFunc(hostGetTlsServerPubkey).
+			Export("host_get_tls_server_pubkey").
 			Instantiate(ctx)
 		if err != nil {
 			engineErr = fmt.Errorf("host module: %w", err)
@@ -313,4 +316,30 @@ func hostRandomFill(ctx context.Context, m api.Module, bufPtr, bufLen uint32) in
 // hostLog: WASM sends a log message to Go.
 func hostLog(ctx context.Context, m api.Module, level, msgPtr, msgLen uint32) {
 	// Silently ignore logs in production — could add debug logging later
+}
+
+// hostGetTlsServerPubkey: WASM calls this to get the TLS server's public key.
+// Returns bytes written to buf, or -1 on error.
+// The server public key is needed for CredSSP authentication (SubjectPublicKeyInfo DER bytes).
+func hostGetTlsServerPubkey(ctx context.Context, m api.Module, bufPtr, bufLen uint32) int32 {
+	inst := getInstance(ctx)
+	if inst == nil || inst.tls == nil {
+		return -1
+	}
+
+	state := inst.tls.ConnectionState()
+	if len(state.PeerCertificates) == 0 {
+		return -1
+	}
+
+	// CredSSP needs the SubjectPublicKeyInfo DER bytes
+	pubKeyDER := state.PeerCertificates[0].RawSubjectPublicKeyInfo
+	if uint32(len(pubKeyDER)) > bufLen {
+		return -1 // Buffer too small
+	}
+
+	if !m.Memory().Write(bufPtr, pubKeyDER) {
+		return -1
+	}
+	return int32(len(pubKeyDER))
 }

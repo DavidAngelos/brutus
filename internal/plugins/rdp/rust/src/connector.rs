@@ -8,10 +8,15 @@
 
 use core::net::SocketAddr;
 
+use ironrdp_connector::credssp::CredsspSequence;
+use ironrdp_connector::sspi::credssp::TsRequest;
+use ironrdp_connector::sspi::generator::GeneratorState;
 use ironrdp_connector::{
-    ClientConnector, Config, ConnectorErrorKind, Credentials, DesktopSize, Sequence, State,
+    ClientConnector, ClientConnectorState, Config, ConnectorErrorKind, Credentials, DesktopSize,
+    Sequence, ServerName, State,
 };
 use ironrdp_pdu::ironrdp_core::WriteBuf;
+use ironrdp_pdu::nego;
 use serde::Deserialize;
 
 use crate::host_io;
@@ -26,7 +31,7 @@ pub const STATE_ERROR: u32 = 5;
 /// Config received from Go host as JSON.
 #[derive(Deserialize)]
 pub struct ConnectorConfig {
-    #[allow(dead_code)]
+    /// Target server address (host:port) - used for CredSSP server name.
     pub server: String,
     pub username: String,
     pub password: String,
@@ -40,9 +45,7 @@ enum Phase {
     Connector,
     /// TLS upgrade requested; waiting for Go to complete it.
     WaitingTlsUpgrade,
-    /// CredSSP phase; driving NLA authentication.
-    /// TODO: Full CredSSP/NTLMv2 implementation using sspi-rs (Phase 3+).
-    #[allow(dead_code)]
+    /// CredSSP phase; driving NLA authentication via sspi-rs NTLMv2.
     Credssp,
     /// Successfully connected.
     Connected,
@@ -57,9 +60,10 @@ enum Phase {
 /// 2. Go sends bytes to server, reads response
 /// 3. step() with server response -> gets NEED_TLS_UPGRADE
 /// 4. Go upgrades to TLS
-/// 5. step() with empty input -> CredSSP phase -> gets NEED_SEND + MCS initial bytes
-/// 6. ... continues through MCS, licensing, capabilities, finalization
-/// 7. Eventually returns CONNECTED or ERROR
+/// 5. step() with empty input -> CredSSP init -> gets NEED_SEND + first TsRequest
+/// 6. ... CredSSP NTLM negotiate/challenge/authenticate rounds
+/// 7. CredSSP done -> continues through MCS, licensing, capabilities, finalization
+/// 8. Eventually returns CONNECTED or ERROR
 pub struct ConnectorHandle {
     connector: ClientConnector,
     phase: Phase,
@@ -67,6 +71,10 @@ pub struct ConnectorHandle {
     banner: String,
     /// Whether we need input from Go on the next call.
     needs_input: bool,
+    /// CredSSP sequence state, active during NLA phase.
+    credssp_sequence: Option<CredsspSequence>,
+    /// Server address (host:port) for CredSSP server name resolution.
+    server_addr: String,
 }
 
 impl ConnectorHandle {
@@ -125,6 +133,8 @@ impl ConnectorHandle {
             phase: Phase::Connector,
             banner: String::new(),
             needs_input: false,
+            credssp_sequence: None,
+            server_addr: config.server,
         })
     }
 
@@ -245,40 +255,172 @@ impl ConnectorHandle {
         Err("connector step exceeded internal iteration limit".to_string())
     }
 
-    /// Initialize the CredSSP sequence.
-    ///
-    /// TODO(Phase 3): Full CredSSP/NTLMv2 implementation using sspi-rs.
-    /// This requires the server's TLS certificate public key, which must be
-    /// obtained from the TLS connection. Since Go handles TLS, we need a
-    /// host function (host_get_tls_server_pubkey) to retrieve it.
-    ///
-    /// For now, we mark CredSSP as done and continue. The server-side MCS
-    /// exchange will still proceed with the credentials embedded in the
-    /// Client Info PDU (autologon mode). This approach works for:
-    /// - Servers that accept NLA but don't strictly enforce CredSSP completion
-    /// - Testing environments with relaxed NLA policies
-    /// - Detecting whether the server accepts the connection at all
-    ///
-    /// When connecting to a server that strictly requires CredSSP, the
-    /// connection will fail at the MCS/licensing stage, which we correctly
-    /// classify as an authentication failure.
-    fn step_credssp_init(&mut self) -> Result<(u32, Vec<u8>), String> {
-        host_io::log_msg(
-            1,
-            "CredSSP phase entered - marking as done (NLA auth placeholder)",
-        );
-
-        // Mark CredSSP as complete and continue with the connector
-        self.connector.mark_credssp_as_done();
-        self.phase = Phase::Connector;
-        self.step_connector(&[])
+    /// Extract the selected_protocol from the connector's CredSSP state.
+    fn get_selected_protocol(&self) -> Result<nego::SecurityProtocol, String> {
+        match &self.connector.state {
+            ClientConnectorState::Credssp { selected_protocol } => Ok(*selected_protocol),
+            other => Err(format!(
+                "authentication failed: credssp: unexpected connector state: {}",
+                other.name()
+            )),
+        }
     }
 
-    /// Step the CredSSP sequence (placeholder for future full implementation).
+    /// Initialize the CredSSP sequence with real NTLMv2 authentication.
+    ///
+    /// Retrieves the TLS server public key via host function, creates a
+    /// CredsspSequence with NTLMv2 auth, processes the initial (empty) TsRequest
+    /// to generate the NTLM Negotiate message, and returns it for sending.
+    fn step_credssp_init(&mut self) -> Result<(u32, Vec<u8>), String> {
+        host_io::log_msg(1, "CredSSP phase entered - initializing NTLMv2 auth");
+
+        // Get the selected protocol from the connector state
+        let selected_protocol = self.get_selected_protocol()?;
+
+        // Get server TLS public key from Go host
+        let server_public_key = host_io::get_tls_server_pubkey().map_err(|e| {
+            format!(
+                "authentication failed: credssp: failed to get server public key: {}",
+                e
+            )
+        })?;
+
+        // Extract credentials and domain from the connector config
+        let credentials = self.connector.config.credentials.clone();
+        let domain = self.connector.config.domain.as_deref();
+
+        // Build server name from the target server address (ServerName strips the port)
+        let server_name = ServerName::new(self.server_addr.clone());
+
+        // Initialize the CredSSP sequence with NTLMv2 (no Kerberos config)
+        let (credssp_seq, initial_ts_request) = CredsspSequence::init(
+            credentials,
+            domain,
+            selected_protocol,
+            server_name,
+            server_public_key,
+            None, // No Kerberos - use NTLM
+        )
+        .map_err(|e| format!("authentication failed: credssp init: {}", e))?;
+
+        self.credssp_sequence = Some(credssp_seq);
+        self.phase = Phase::Credssp;
+
+        // Process the initial (empty) TsRequest to generate NTLM Negotiate message
+        self.process_credssp_ts_request(initial_ts_request)
+    }
+
+    /// Process a TsRequest through the CredSSP generator and encode the output.
+    ///
+    /// The generator pattern used by sspi-rs may yield NetworkRequest for
+    /// Kerberos KDC communication. For NTLMv2, the generator completes
+    /// synchronously without network requests.
+    fn process_credssp_ts_request(
+        &mut self,
+        ts_request: TsRequest,
+    ) -> Result<(u32, Vec<u8>), String> {
+        // Phase 1: Run the generator to get the client state.
+        // We need to scope the mutable borrow of credssp_sequence so we can
+        // use it again for handle_process_result.
+        let client_state = {
+            let credssp = self
+                .credssp_sequence
+                .as_mut()
+                .ok_or("authentication failed: credssp sequence not initialized")?;
+
+            let mut generator = credssp.process_ts_request(ts_request);
+            match generator.start() {
+                GeneratorState::Completed(result) => result.map_err(|e| {
+                    format!("authentication failed: credssp: {}", e)
+                })?,
+                GeneratorState::Suspended(_network_request) => {
+                    // For NTLMv2, the generator should not suspend (no network needed).
+                    // Kerberos would need KDC communication which we don't support in WASM.
+                    return Err(
+                        "authentication failed: credssp: unexpected network request (Kerberos not supported in WASM)"
+                            .to_string(),
+                    );
+                }
+            }
+            // generator is dropped here, releasing the mutable borrow
+        };
+
+        // Phase 2: Handle the result and produce output bytes.
+        let mut output = WriteBuf::new();
+        {
+            let credssp = self
+                .credssp_sequence
+                .as_mut()
+                .ok_or("authentication failed: credssp sequence not initialized")?;
+
+            credssp
+                .handle_process_result(client_state, &mut output)
+                .map_err(|e| format!("authentication failed: credssp: {}", e))?;
+        }
+
+        // Phase 3: Check if CredSSP is complete and determine next action.
+        let is_finished = self
+            .credssp_sequence
+            .as_ref()
+            .map(|cs| cs.next_pdu_hint().is_none())
+            .unwrap_or(true);
+
+        if is_finished {
+            // CredSSP sequence is complete
+            self.credssp_sequence = None;
+            self.connector.mark_credssp_as_done();
+            self.phase = Phase::Connector;
+
+            // If there's output from the final message, send it first
+            let out_bytes = output.filled().to_vec();
+            if !out_bytes.is_empty() {
+                // We need to send the final CredSSP message, then the Go side
+                // will call step() again which will continue with the connector
+                return Ok((STATE_NEED_SEND, out_bytes));
+            }
+
+            // No final output, continue directly with connector
+            return self.step_connector(&[]);
+        }
+
+        // CredSSP still in progress - check if we have output to send
+        let out_bytes = output.filled().to_vec();
+        if !out_bytes.is_empty() {
+            return Ok((STATE_NEED_SEND, out_bytes));
+        }
+
+        // Need more input from server
+        Ok((STATE_NEED_RECV, Vec::new()))
+    }
+
+    /// Step the CredSSP sequence with server input.
+    ///
+    /// Decodes the server's TsRequest or EarlyUserAuthResult, processes it,
+    /// and returns the next action (NEED_SEND/NEED_RECV/continue to connector).
     fn step_credssp(&mut self, input: &[u8]) -> Result<(u32, Vec<u8>), String> {
-        // Since we mark CredSSP as done in init, this shouldn't normally be called.
-        self.phase = Phase::Connector;
-        self.step_connector(input)
+        let credssp = self
+            .credssp_sequence
+            .as_mut()
+            .ok_or("authentication failed: credssp sequence not initialized")?;
+
+        // Decode the server message
+        let ts_request_opt = credssp
+            .decode_server_message(input)
+            .map_err(|e| format!("authentication failed: credssp: {}", e))?;
+
+        match ts_request_opt {
+            Some(ts_request) => {
+                // Server sent a TsRequest - process it
+                self.process_credssp_ts_request(ts_request)
+            }
+            None => {
+                // EarlyUserAuthResult received and CredSSP is finished
+                self.credssp_sequence = None;
+                self.connector.mark_credssp_as_done();
+                self.phase = Phase::Connector;
+                self.step_connector(&[])
+            }
+        }
     }
 
     /// Classify connector errors into auth failure vs connection errors.
