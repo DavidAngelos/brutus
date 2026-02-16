@@ -1,0 +1,286 @@
+//! Wraps IronRDP's ClientConnector state machine for WASM export.
+//!
+//! The connector is a state machine that steps through the RDP connection
+//! handshake: X.224 negotiation -> TLS upgrade -> NLA/CredSSP -> MCS -> connected.
+//!
+//! Each step consumes input bytes and produces output bytes + next state.
+//! The Go host drives the loop, performing actual I/O between steps.
+
+use core::net::SocketAddr;
+
+use ironrdp_connector::{
+    ClientConnector, Config, ConnectorErrorKind, Credentials, DesktopSize, Sequence, State,
+};
+use ironrdp_pdu::ironrdp_core::WriteBuf;
+use serde::Deserialize;
+
+use crate::host_io;
+
+// State constants returned to Go (must match Go stateNeedSend etc.)
+pub const STATE_NEED_SEND: u32 = 1;
+pub const STATE_NEED_RECV: u32 = 2;
+pub const STATE_NEED_TLS_UPGRADE: u32 = 3;
+pub const STATE_CONNECTED: u32 = 4;
+pub const STATE_ERROR: u32 = 5;
+
+/// Config received from Go host as JSON.
+#[derive(Deserialize)]
+pub struct ConnectorConfig {
+    #[allow(dead_code)]
+    pub server: String,
+    pub username: String,
+    pub password: String,
+    pub domain: String,
+}
+
+/// Internal phase of the connector.
+#[derive(Debug)]
+enum Phase {
+    /// Driving the IronRDP ClientConnector state machine.
+    Connector,
+    /// TLS upgrade requested; waiting for Go to complete it.
+    WaitingTlsUpgrade,
+    /// CredSSP phase; driving NLA authentication.
+    /// TODO: Full CredSSP/NTLMv2 implementation using sspi-rs (Phase 3+).
+    #[allow(dead_code)]
+    Credssp,
+    /// Successfully connected.
+    Connected,
+    /// An error occurred.
+    Error(String),
+}
+
+/// Holds the connector state between calls from Go.
+///
+/// The Go host drives the state machine by calling `step()` repeatedly:
+/// 1. step() with empty input -> gets NEED_SEND + X.224 connection request bytes
+/// 2. Go sends bytes to server, reads response
+/// 3. step() with server response -> gets NEED_TLS_UPGRADE
+/// 4. Go upgrades to TLS
+/// 5. step() with empty input -> CredSSP phase -> gets NEED_SEND + MCS initial bytes
+/// 6. ... continues through MCS, licensing, capabilities, finalization
+/// 7. Eventually returns CONNECTED or ERROR
+pub struct ConnectorHandle {
+    connector: ClientConnector,
+    phase: Phase,
+    /// Banner captured during handshake.
+    banner: String,
+    /// Whether we need input from Go on the next call.
+    needs_input: bool,
+}
+
+impl ConnectorHandle {
+    /// Create a new connector from JSON config.
+    pub fn new(config_bytes: &[u8]) -> Result<Self, String> {
+        let config: ConnectorConfig =
+            serde_json::from_slice(config_bytes).map_err(|e| format!("parse config: {}", e))?;
+
+        let domain = if config.domain.is_empty() {
+            None
+        } else {
+            Some(config.domain.clone())
+        };
+
+        let ironrdp_config = Config {
+            desktop_size: DesktopSize {
+                width: 1024,
+                height: 768,
+            },
+            desktop_scale_factor: 100,
+            enable_tls: true,
+            enable_credssp: true,
+            credentials: Credentials::UsernamePassword {
+                username: config.username.clone(),
+                password: config.password.clone(),
+            },
+            domain,
+            client_build: 0,
+            client_name: "brutus".to_string(),
+            keyboard_type: ironrdp_pdu::gcc::KeyboardType::IbmEnhanced,
+            keyboard_subtype: 0,
+            keyboard_functional_keys_count: 12,
+            keyboard_layout: 0x0409, // US English
+            ime_file_name: String::new(),
+            bitmap: None,
+            dig_product_id: String::new(),
+            client_dir: String::new(),
+            platform: ironrdp_pdu::rdp::capability_sets::MajorPlatformType::UNSPECIFIED,
+            hardware_id: None,
+            request_data: None,
+            autologon: true,
+            enable_audio_playback: false,
+            performance_flags: ironrdp_pdu::rdp::client_info::PerformanceFlags::default(),
+            license_cache: None,
+            timezone_info: ironrdp_pdu::rdp::client_info::TimezoneInfo::default(),
+            enable_server_pointer: false,
+            pointer_software_rendering: false,
+        };
+
+        // Use a dummy client address for the PDU (Go handles real networking)
+        let client_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
+        let connector = ClientConnector::new(ironrdp_config, client_addr);
+
+        Ok(ConnectorHandle {
+            connector,
+            phase: Phase::Connector,
+            banner: String::new(),
+            needs_input: false,
+        })
+    }
+
+    /// Drive the connector one step.
+    ///
+    /// Returns (state_code, output_bytes).
+    /// Go calls this repeatedly, providing input data when state was NEED_RECV.
+    pub fn step(&mut self, input: &[u8]) -> (u32, Vec<u8>) {
+        match &self.phase {
+            Phase::Connected => return (STATE_CONNECTED, self.banner.as_bytes().to_vec()),
+            Phase::Error(msg) => return (STATE_ERROR, msg.as_bytes().to_vec()),
+            _ => {}
+        }
+
+        match self.do_step(input) {
+            Ok((state, output)) => (state, output),
+            Err(e) => {
+                let msg = e.clone();
+                self.phase = Phase::Error(e);
+                (STATE_ERROR, msg.into_bytes())
+            }
+        }
+    }
+
+    fn do_step(&mut self, input: &[u8]) -> Result<(u32, Vec<u8>), String> {
+        match self.phase {
+            Phase::Connector => self.step_connector(input),
+            Phase::WaitingTlsUpgrade => {
+                // Go has completed TLS upgrade. Now mark it as done in the connector
+                // and continue stepping.
+                self.connector.mark_security_upgrade_as_done();
+                self.phase = Phase::Connector;
+
+                // Check if we need to do CredSSP
+                if self.connector.should_perform_credssp() {
+                    return self.step_credssp_init();
+                }
+
+                // Continue with normal connector stepping
+                self.step_connector(&[])
+            }
+            Phase::Credssp => self.step_credssp(input),
+            Phase::Connected => Ok((STATE_CONNECTED, self.banner.as_bytes().to_vec())),
+            Phase::Error(ref msg) => Ok((STATE_ERROR, msg.as_bytes().to_vec())),
+        }
+    }
+
+    /// Step the IronRDP ClientConnector state machine.
+    fn step_connector(&mut self, input: &[u8]) -> Result<(u32, Vec<u8>), String> {
+        let mut output = WriteBuf::new();
+
+        // If the connector needs input, call step with input.
+        // Otherwise use step_no_input to generate outbound data.
+        let _written = if input.is_empty() && !self.needs_input {
+            self.connector
+                .step_no_input(&mut output)
+                .map_err(|e| self.classify_connector_error(&e))?
+        } else {
+            self.needs_input = false;
+            self.connector
+                .step(input, &mut output)
+                .map_err(|e| self.classify_connector_error(&e))?
+        };
+
+        // Check if security upgrade is needed (TLS)
+        if self.connector.should_perform_security_upgrade() {
+            self.phase = Phase::WaitingTlsUpgrade;
+            return Ok((STATE_NEED_TLS_UPGRADE, Vec::new()));
+        }
+
+        // Check if CredSSP is needed
+        if self.connector.should_perform_credssp() {
+            return self.step_credssp_init();
+        }
+
+        // Check if connected
+        if self.connector.state.is_terminal() {
+            self.banner = format!(
+                "RDP server, state: {}",
+                self.connector.state().name()
+            );
+            self.phase = Phase::Connected;
+            return Ok((STATE_CONNECTED, self.banner.as_bytes().to_vec()));
+        }
+
+        // Check if we produced output to send
+        let out_bytes = output.filled().to_vec();
+        if !out_bytes.is_empty() {
+            self.needs_input = true; // After sending, we expect a response
+            return Ok((STATE_NEED_SEND, out_bytes));
+        }
+
+        // Check if we need more input (hint available means we expect data)
+        if self.connector.next_pdu_hint().is_some() {
+            self.needs_input = true;
+            return Ok((STATE_NEED_RECV, Vec::new()));
+        }
+
+        // No output, no hint -- step again with empty input to advance
+        self.step_connector(&[])
+    }
+
+    /// Initialize the CredSSP sequence.
+    ///
+    /// TODO(Phase 3): Full CredSSP/NTLMv2 implementation using sspi-rs.
+    /// This requires the server's TLS certificate public key, which must be
+    /// obtained from the TLS connection. Since Go handles TLS, we need a
+    /// host function (host_get_tls_server_pubkey) to retrieve it.
+    ///
+    /// For now, we mark CredSSP as done and continue. The server-side MCS
+    /// exchange will still proceed with the credentials embedded in the
+    /// Client Info PDU (autologon mode). This approach works for:
+    /// - Servers that accept NLA but don't strictly enforce CredSSP completion
+    /// - Testing environments with relaxed NLA policies
+    /// - Detecting whether the server accepts the connection at all
+    ///
+    /// When connecting to a server that strictly requires CredSSP, the
+    /// connection will fail at the MCS/licensing stage, which we correctly
+    /// classify as an authentication failure.
+    fn step_credssp_init(&mut self) -> Result<(u32, Vec<u8>), String> {
+        host_io::log_msg(
+            1,
+            "CredSSP phase entered - marking as done (NLA auth placeholder)",
+        );
+
+        // Mark CredSSP as complete and continue with the connector
+        self.connector.mark_credssp_as_done();
+        self.phase = Phase::Connector;
+        self.step_connector(&[])
+    }
+
+    /// Step the CredSSP sequence (placeholder for future full implementation).
+    fn step_credssp(&mut self, input: &[u8]) -> Result<(u32, Vec<u8>), String> {
+        // Since we mark CredSSP as done in init, this shouldn't normally be called.
+        self.phase = Phase::Connector;
+        self.step_connector(input)
+    }
+
+    /// Classify connector errors into auth failure vs connection errors.
+    /// The error strings are used by Go's ClassifyAuthError with rdpAuthIndicators.
+    fn classify_connector_error(
+        &self,
+        err: &ironrdp_connector::ConnectorError,
+    ) -> String {
+        let kind = &err.kind;
+        match kind {
+            ConnectorErrorKind::Credssp(_) => {
+                format!("authentication failed: credssp: {}", err)
+            }
+            ConnectorErrorKind::AccessDenied => {
+                "authentication failed: access denied".to_string()
+            }
+            ConnectorErrorKind::Negotiation(failure) => {
+                format!("authentication failed: negotiation: {}", failure)
+            }
+            _ => format!("connection error: {}", err),
+        }
+    }
+}

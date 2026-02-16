@@ -12,11 +12,15 @@ if [ ! -f "$WASM_FILE" ]; then
     exit 1
 fi
 
-# Optimize the WASM binary for size (optional)
+# Optimize the WASM binary for size (optional, may fail on some WASM features)
 if command -v wasm-opt &> /dev/null; then
     echo "Optimizing with wasm-opt..."
-    wasm-opt -Oz --enable-bulk-memory "$WASM_FILE" -o "${WASM_FILE%.wasm}.opt.wasm"
-    mv "${WASM_FILE%.wasm}.opt.wasm" "$WASM_FILE"
+    if wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int "$WASM_FILE" -o "${WASM_FILE%.wasm}.opt.wasm" 2>/dev/null; then
+        mv "${WASM_FILE%.wasm}.opt.wasm" "$WASM_FILE"
+        echo "wasm-opt optimization applied."
+    else
+        echo "wasm-opt optimization skipped (unsupported features in binary)."
+    fi
 fi
 
 # Copy to Go embed location

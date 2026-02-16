@@ -94,8 +94,8 @@ func TestWasmConnectorNew(t *testing.T) {
 	connectorNewFn := inst.mod.ExportedFunction("connector_new")
 	require.NotNil(t, connectorNewFn, "connector_new must be exported")
 
-	// Write a dummy config
-	config := []byte(`{"server":"test"}`)
+	// Write a valid config (real binary validates all fields)
+	config := []byte(`{"server":"test:3389","username":"admin","password":"pass","domain":""}`)
 	ptr, length, err := inst.writeToWasm(ctx, config)
 	require.NoError(t, err)
 

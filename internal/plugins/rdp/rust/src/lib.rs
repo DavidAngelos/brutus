@@ -1,53 +1,84 @@
-//! Stub IronRDP WASM module for pipeline validation.
-//! This will be replaced with real IronRDP integration in Phase 2.
+//! IronRDP WASM module for Brutus RDP authentication testing.
+//!
+//! Exports:
+//! - wasm_alloc/wasm_dealloc: memory management
+//! - connector_new/step/free: RDP connector state machine
+//! - version: module version string
 
-use std::alloc::{alloc, dealloc, Layout};
+mod allocator;
+mod connector;
+mod host_io;
 
-/// Allocate memory in WASM linear memory.
-/// Called by Go host to write data into WASM.
-#[no_mangle]
-pub extern "C" fn wasm_alloc(size: u32) -> u32 {
-    if size == 0 {
-        return 0;
-    }
-    let layout = Layout::from_size_align(size as usize, 1).unwrap();
-    unsafe { alloc(layout) as u32 }
+use connector::ConnectorHandle;
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+// Re-export allocator functions
+pub use allocator::{wasm_alloc, wasm_dealloc};
+
+/// Global handle table for connector instances.
+/// Protected by mutex for safety (though WASM is single-threaded).
+static HANDLES: Mutex<Option<HandleTable>> = Mutex::new(None);
+
+struct HandleTable {
+    next_id: u32,
+    connectors: HashMap<u32, ConnectorHandle>,
 }
 
-/// Free memory in WASM linear memory.
-/// Called by Go host to clean up allocations.
-#[no_mangle]
-pub extern "C" fn wasm_dealloc(ptr: u32, size: u32) {
-    if ptr == 0 || size == 0 {
-        return;
+impl HandleTable {
+    fn new() -> Self {
+        HandleTable {
+            next_id: 1,
+            connectors: HashMap::new(),
+        }
     }
-    let layout = Layout::from_size_align(size as usize, 1).unwrap();
-    unsafe { dealloc(ptr as *mut u8, layout) }
+
+    fn insert(&mut self, handle: ConnectorHandle) -> u32 {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.connectors.insert(id, handle);
+        id
+    }
+
+    fn get_mut(&mut self, id: u32) -> Option<&mut ConnectorHandle> {
+        self.connectors.get_mut(&id)
+    }
+
+    fn remove(&mut self, id: u32) {
+        self.connectors.remove(&id);
+    }
 }
 
-// Connector state constants returned by connector_step
-const STATE_NEED_SEND: u32 = 1;
-const STATE_NEED_RECV: u32 = 2;
-const STATE_NEED_TLS_UPGRADE: u32 = 3;
-const STATE_CONNECTED: u32 = 4;
-const STATE_ERROR: u32 = 5;
+fn with_handles<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut HandleTable) -> R,
+{
+    let mut guard = HANDLES.lock().unwrap();
+    let table = guard.get_or_insert_with(HandleTable::new);
+    f(table)
+}
 
-/// Create a new RDP connector. Returns a handle (non-zero on success, 0 on error).
-/// config_ptr/config_len: JSON config bytes in WASM memory.
-/// Stub: ignores config, returns handle=1.
+/// Create a new RDP connector from JSON config.
+/// Returns handle (non-zero) on success, 0 on error.
 #[no_mangle]
 pub extern "C" fn connector_new(config_ptr: u32, config_len: u32) -> u32 {
-    // Stub: return a dummy handle
     if config_len == 0 {
-        return 0; // Error: empty config
+        return 0;
     }
-    1 // Dummy handle
+
+    let config_bytes = unsafe {
+        std::slice::from_raw_parts(config_ptr as *const u8, config_len as usize)
+    };
+
+    match ConnectorHandle::new(config_bytes) {
+        Ok(handle) => with_handles(|t| t.insert(handle)),
+        Err(_) => 0,
+    }
 }
 
 /// Step the connector state machine.
-/// Returns: state code (see STATE_* constants).
-/// output_ptr_out/output_len_out: set to point at output bytes in WASM memory.
-/// Stub: immediately returns CONNECTED.
+/// Returns state code (STATE_NEED_SEND, STATE_NEED_RECV, STATE_CONNECTED, STATE_ERROR).
+/// Output bytes are written to WASM memory at output_ptr_out/output_len_out.
 #[no_mangle]
 pub extern "C" fn connector_step(
     handle: u32,
@@ -56,25 +87,47 @@ pub extern "C" fn connector_step(
     output_ptr_out: u32,
     output_len_out: u32,
 ) -> u32 {
-    if handle == 0 {
-        return STATE_ERROR;
+    let input = if input_len > 0 {
+        unsafe { std::slice::from_raw_parts(input_ptr as *const u8, input_len as usize) }
+    } else {
+        &[]
+    };
+
+    let (state, output) = with_handles(|t| match t.get_mut(handle) {
+        Some(conn) => conn.step(input),
+        None => (connector::STATE_ERROR, Vec::new()),
+    });
+
+    // Write output to WASM memory if there is any
+    if !output.is_empty() {
+        let out_ptr = wasm_alloc(output.len() as u32);
+        if out_ptr != 0 {
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    output.as_ptr(),
+                    out_ptr as *mut u8,
+                    output.len(),
+                );
+                // Write pointer and length to the output slots
+                std::ptr::write(output_ptr_out as *mut u32, out_ptr);
+                std::ptr::write(output_len_out as *mut u32, output.len() as u32);
+            }
+        }
     }
-    // Stub: write zeros to output pointers and return CONNECTED
-    STATE_CONNECTED
+
+    state
 }
 
 /// Free a connector handle.
 #[no_mangle]
 pub extern "C" fn connector_free(handle: u32) {
-    // Stub: nothing to free
+    with_handles(|t| t.remove(handle));
 }
 
-/// Return the version string for diagnostics.
-/// Writes version bytes to a pre-allocated buffer at ptr.
-/// Returns actual length written.
+/// Write version string to buffer. Returns bytes written.
 #[no_mangle]
 pub extern "C" fn version(ptr: u32, max_len: u32) -> u32 {
-    let v = b"ironrdp-wasm-stub-0.1.0";
+    let v = b"ironrdp-wasm-0.1.0";
     let len = v.len().min(max_len as usize);
     unsafe {
         std::ptr::copy_nonoverlapping(v.as_ptr(), ptr as *mut u8, len);

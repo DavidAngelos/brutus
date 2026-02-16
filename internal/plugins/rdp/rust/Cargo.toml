@@ -6,6 +6,16 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib"]
 
+[dependencies]
+# IronRDP core-tier crates (I/O-free state machines)
+ironrdp-pdu = { version = "0.7", features = ["std"] }
+ironrdp-connector = "0.8"
+ironrdp-svc = "0.6"
+
+# Serialization for cross-boundary config
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
 [profile.release]
 opt-level = "z"
 lto = true

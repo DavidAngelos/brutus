@@ -16,6 +16,8 @@ package rdp
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -26,16 +28,19 @@ import (
 )
 
 // rdpAuthIndicators defines authentication failure strings from RDP/CredSSP.
+// These are matched case-insensitively by ClassifyAuthError.
 var rdpAuthIndicators = []string{
 	"logon failed",
 	"login failed",
 	"authentication failed",
 	"access denied",
-	"credentials",
-	"password",
-	"ntlm",
 	"credssp",
 	"sec_e_logon_denied",
+	"nla",
+	"ntlm",
+	"wrong password",
+	"invalid credentials",
+	"negotiation failure",
 }
 
 func init() {
@@ -144,6 +149,15 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 
 // runConnector drives the IronRDP connector state machine through WASM calls.
 // Returns the RDP banner (if captured) and any error.
+//
+// The state machine loop:
+// 1. Call connector_step with any pending input
+// 2. Check returned state code
+// 3. NEED_SEND: read output bytes from WASM, send to server via TCP
+// 4. NEED_RECV: read from server, write data to WASM for next step
+// 5. NEED_TLS_UPGRADE: upgrade TCP to TLS
+// 6. CONNECTED: success
+// 7. ERROR: read error message from output
 func (p *Plugin) runConnector(ctx context.Context, inst *wasmInstance, config []byte) (string, error) {
 	// Write config to WASM memory
 	configPtr, configLen, err := inst.writeToWasm(ctx, config)
@@ -188,13 +202,11 @@ func (p *Plugin) runConnector(ctx context.Context, inst *wasmInstance, config []
 
 	// Drive the state machine loop
 	// The WASM connector returns states: NEED_SEND, NEED_RECV, NEED_TLS_UPGRADE, CONNECTED, ERROR
-	// For the stub, this immediately returns CONNECTED.
-	// For the real implementation, this loops until CONNECTED or ERROR.
 	inputPtr := uint32(0)
 	inputLen := uint32(0)
 
 	for i := 0; i < 100; i++ { // Safety limit to prevent infinite loops
-		// Allocate output pointer slots in WASM memory
+		// Allocate output pointer slots in WASM memory (4 bytes each for u32 values)
 		outPtrSlot, _, err := inst.writeToWasm(callCtx, make([]byte, 4))
 		if err != nil {
 			return banner, fmt.Errorf("alloc out ptr: %w", err)
@@ -224,30 +236,106 @@ func (p *Plugin) runConnector(ctx context.Context, inst *wasmInstance, config []
 
 		switch state {
 		case stateConnected:
+			// Read any output (may contain banner info)
+			bannerBytes := readOutputFromSlots(inst, outPtrSlot, outLenSlot, callCtx)
+			if len(bannerBytes) > 0 {
+				banner = string(bannerBytes)
+			}
+			inst.freeInWasm(callCtx, outPtrSlot, 4)
+			inst.freeInWasm(callCtx, outLenSlot, 4)
 			return banner, nil // Success!
 
 		case stateError:
-			return banner, fmt.Errorf("rdp authentication failed")
+			// Read error message from output
+			errBytes := readOutputFromSlots(inst, outPtrSlot, outLenSlot, callCtx)
+			inst.freeInWasm(callCtx, outPtrSlot, 4)
+			inst.freeInWasm(callCtx, outLenSlot, 4)
+			errMsg := "rdp authentication failed"
+			if len(errBytes) > 0 {
+				errMsg = string(errBytes)
+			}
+			return banner, fmt.Errorf("%s", errMsg)
 
 		case stateNeedSend:
-			// Read output bytes and send to server
-			// (implementation details for Phase 2)
-			return banner, fmt.Errorf("connector state machine not yet implemented")
+			// Read output bytes from WASM and send to server
+			sendData := readOutputFromSlots(inst, outPtrSlot, outLenSlot, callCtx)
+			inst.freeInWasm(callCtx, outPtrSlot, 4)
+			inst.freeInWasm(callCtx, outLenSlot, 4)
+
+			if len(sendData) > 0 {
+				_, writeErr := inst.activeConn().Write(sendData)
+				if writeErr != nil {
+					return banner, fmt.Errorf("connection error: tcp write: %w", writeErr)
+				}
+			}
+			// Continue loop — next step will read the server response
 
 		case stateNeedRecv:
-			// Read from server and pass to next step
-			return banner, fmt.Errorf("connector state machine not yet implemented")
+			inst.freeInWasm(callCtx, outPtrSlot, 4)
+			inst.freeInWasm(callCtx, outLenSlot, 4)
+
+			// Read from server
+			buf := make([]byte, 16384) // 16KB buffer
+			n, readErr := inst.activeConn().Read(buf)
+			if readErr != nil {
+				return banner, fmt.Errorf("connection error: tcp read: %w", readErr)
+			}
+			// Write received data to WASM for next step
+			inputPtr, inputLen, err = inst.writeToWasm(callCtx, buf[:n])
+			if err != nil {
+				return banner, fmt.Errorf("write recv to wasm: %w", err)
+			}
 
 		case stateNeedTLSUpgrade:
-			// TLS upgrade handled by host function
-			return banner, fmt.Errorf("connector state machine not yet implemented")
+			inst.freeInWasm(callCtx, outPtrSlot, 4)
+			inst.freeInWasm(callCtx, outLenSlot, 4)
+
+			// Perform TLS upgrade on the connection
+			tlsConf := &tls.Config{
+				InsecureSkipVerify: true, //nolint:gosec // RDP servers use self-signed certs
+			}
+			tlsConn := tls.Client(inst.conn, tlsConf)
+			if tlsErr := tlsConn.HandshakeContext(ctx); tlsErr != nil {
+				return banner, fmt.Errorf("connection error: tls upgrade: %w", tlsErr)
+			}
+			inst.tls = tlsConn
+			// Continue loop — WASM will be notified via the next step call
 
 		default:
+			inst.freeInWasm(callCtx, outPtrSlot, 4)
+			inst.freeInWasm(callCtx, outLenSlot, 4)
 			return banner, fmt.Errorf("unknown connector state: %d", state)
 		}
 	}
 
 	return banner, fmt.Errorf("connector exceeded maximum iterations")
+}
+
+// readOutputFromSlots reads the output pointer and length from WASM memory slots,
+// then reads the actual output data. Returns the output bytes (may be empty).
+func readOutputFromSlots(inst *wasmInstance, outPtrSlot, outLenSlot uint32, ctx context.Context) []byte {
+	outPtrBytes, err := inst.readFromWasm(outPtrSlot, 4)
+	if err != nil {
+		return nil
+	}
+	outLenBytes, err := inst.readFromWasm(outLenSlot, 4)
+	if err != nil {
+		return nil
+	}
+	outPtr := binary.LittleEndian.Uint32(outPtrBytes)
+	outLen := binary.LittleEndian.Uint32(outLenBytes)
+
+	if outLen == 0 || outPtr == 0 {
+		return nil
+	}
+
+	data, err := inst.readFromWasm(outPtr, outLen)
+	if err != nil {
+		return nil
+	}
+	// Free the output buffer allocated by WASM
+	inst.freeInWasm(ctx, outPtr, outLen)
+	return data
 }
 
 // parseDomainUsername splits "DOMAIN\username" into (domain, username).
