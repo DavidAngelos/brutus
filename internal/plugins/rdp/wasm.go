@@ -267,7 +267,13 @@ func hostTcpWrite(ctx context.Context, m api.Module, fd, bufPtr, bufLen uint32) 
 	return int32(n)
 }
 
-// hostTlsUpgrade: WASM signals that TLS upgrade is needed (after X.224 negotiation).
+// hostTlsUpgrade is a registered host function that the Rust WASM connector can
+// call to request a TLS upgrade. Currently, the TLS upgrade is handled on the Go
+// side via the stateNeedTLSUpgrade case in runConnector (see rdp.go), which is the
+// active code path. This host function is registered but not called by the current
+// Rust connector implementation. Both paths are retained because the Rust code MAY
+// call this function directly in future CredSSP/NLA implementations that need
+// tighter control over the TLS handshake timing from within the WASM module.
 func hostTlsUpgrade(ctx context.Context, m api.Module, fd uint32) int32 {
 	inst := getInstance(ctx)
 	if inst == nil || inst.conn == nil {

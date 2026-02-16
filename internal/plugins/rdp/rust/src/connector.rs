@@ -172,59 +172,77 @@ impl ConnectorHandle {
         }
     }
 
+    /// Maximum internal iterations before returning an error.
+    /// WASM has a limited call stack (~1000 frames), so we use a bounded loop
+    /// instead of recursion to advance the connector when no output or PDU hint
+    /// is produced by a step.
+    const MAX_STEP_ITERATIONS: usize = 50;
+
     /// Step the IronRDP ClientConnector state machine.
+    ///
+    /// Uses a bounded loop (max 50 iterations) instead of recursion to handle
+    /// cases where the connector needs multiple internal steps without producing
+    /// output or a PDU hint. This avoids stack overflow in WASM's limited
+    /// call stack.
     fn step_connector(&mut self, input: &[u8]) -> Result<(u32, Vec<u8>), String> {
-        let mut output = WriteBuf::new();
+        let mut current_input = input;
+        let empty: &[u8] = &[];
 
-        // If the connector needs input, call step with input.
-        // Otherwise use step_no_input to generate outbound data.
-        let _written = if input.is_empty() && !self.needs_input {
-            self.connector
-                .step_no_input(&mut output)
-                .map_err(|e| self.classify_connector_error(&e))?
-        } else {
-            self.needs_input = false;
-            self.connector
-                .step(input, &mut output)
-                .map_err(|e| self.classify_connector_error(&e))?
-        };
+        for _ in 0..Self::MAX_STEP_ITERATIONS {
+            let mut output = WriteBuf::new();
 
-        // Check if security upgrade is needed (TLS)
-        if self.connector.should_perform_security_upgrade() {
-            self.phase = Phase::WaitingTlsUpgrade;
-            return Ok((STATE_NEED_TLS_UPGRADE, Vec::new()));
+            // If the connector needs input, call step with input.
+            // Otherwise use step_no_input to generate outbound data.
+            let _written = if current_input.is_empty() && !self.needs_input {
+                self.connector
+                    .step_no_input(&mut output)
+                    .map_err(|e| self.classify_connector_error(&e))?
+            } else {
+                self.needs_input = false;
+                self.connector
+                    .step(current_input, &mut output)
+                    .map_err(|e| self.classify_connector_error(&e))?
+            };
+
+            // Check if security upgrade is needed (TLS)
+            if self.connector.should_perform_security_upgrade() {
+                self.phase = Phase::WaitingTlsUpgrade;
+                return Ok((STATE_NEED_TLS_UPGRADE, Vec::new()));
+            }
+
+            // Check if CredSSP is needed
+            if self.connector.should_perform_credssp() {
+                return self.step_credssp_init();
+            }
+
+            // Check if connected
+            if self.connector.state.is_terminal() {
+                self.banner = format!(
+                    "RDP server, state: {}",
+                    self.connector.state().name()
+                );
+                self.phase = Phase::Connected;
+                return Ok((STATE_CONNECTED, self.banner.as_bytes().to_vec()));
+            }
+
+            // Check if we produced output to send
+            let out_bytes = output.filled().to_vec();
+            if !out_bytes.is_empty() {
+                self.needs_input = true; // After sending, we expect a response
+                return Ok((STATE_NEED_SEND, out_bytes));
+            }
+
+            // Check if we need more input (hint available means we expect data)
+            if self.connector.next_pdu_hint().is_some() {
+                self.needs_input = true;
+                return Ok((STATE_NEED_RECV, Vec::new()));
+            }
+
+            // No output, no hint -- loop again with empty input to advance
+            current_input = empty;
         }
 
-        // Check if CredSSP is needed
-        if self.connector.should_perform_credssp() {
-            return self.step_credssp_init();
-        }
-
-        // Check if connected
-        if self.connector.state.is_terminal() {
-            self.banner = format!(
-                "RDP server, state: {}",
-                self.connector.state().name()
-            );
-            self.phase = Phase::Connected;
-            return Ok((STATE_CONNECTED, self.banner.as_bytes().to_vec()));
-        }
-
-        // Check if we produced output to send
-        let out_bytes = output.filled().to_vec();
-        if !out_bytes.is_empty() {
-            self.needs_input = true; // After sending, we expect a response
-            return Ok((STATE_NEED_SEND, out_bytes));
-        }
-
-        // Check if we need more input (hint available means we expect data)
-        if self.connector.next_pdu_hint().is_some() {
-            self.needs_input = true;
-            return Ok((STATE_NEED_RECV, Vec::new()));
-        }
-
-        // No output, no hint -- step again with empty input to advance
-        self.step_connector(&[])
+        Err("connector step exceeded internal iteration limit".to_string())
     }
 
     /// Initialize the CredSSP sequence.

@@ -27,6 +27,14 @@ import (
 	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
 
+const (
+	// tcpReadBufSize is the buffer size for reading TCP data from the RDP server.
+	tcpReadBufSize = 16384
+
+	// maxConnectorIterations is the safety limit for the connector state machine loop.
+	maxConnectorIterations = 100
+)
+
 // rdpAuthIndicators defines authentication failure strings from RDP/CredSSP.
 // These are matched case-insensitively by ClassifyAuthError.
 var rdpAuthIndicators = []string{
@@ -205,7 +213,7 @@ func (p *Plugin) runConnector(ctx context.Context, inst *wasmInstance, config []
 	inputPtr := uint32(0)
 	inputLen := uint32(0)
 
-	for i := 0; i < 100; i++ { // Safety limit to prevent infinite loops
+	for i := 0; i < maxConnectorIterations; i++ {
 		// Allocate output pointer slots in WASM memory (4 bytes each for u32 values)
 		outPtrSlot, _, err := inst.writeToWasm(callCtx, make([]byte, 4))
 		if err != nil {
@@ -222,6 +230,8 @@ func (p *Plugin) runConnector(ctx context.Context, inst *wasmInstance, config []
 			uint64(outPtrSlot), uint64(outLenSlot),
 		)
 		if err != nil {
+			inst.freeInWasm(callCtx, outPtrSlot, 4)
+			inst.freeInWasm(callCtx, outLenSlot, 4)
 			return banner, fmt.Errorf("connector_step: %w", err)
 		}
 
@@ -237,7 +247,7 @@ func (p *Plugin) runConnector(ctx context.Context, inst *wasmInstance, config []
 		switch state {
 		case stateConnected:
 			// Read any output (may contain banner info)
-			bannerBytes := readOutputFromSlots(inst, outPtrSlot, outLenSlot, callCtx)
+			bannerBytes := readOutputFromSlots(callCtx, inst, outPtrSlot, outLenSlot)
 			if len(bannerBytes) > 0 {
 				banner = string(bannerBytes)
 			}
@@ -247,7 +257,7 @@ func (p *Plugin) runConnector(ctx context.Context, inst *wasmInstance, config []
 
 		case stateError:
 			// Read error message from output
-			errBytes := readOutputFromSlots(inst, outPtrSlot, outLenSlot, callCtx)
+			errBytes := readOutputFromSlots(callCtx, inst, outPtrSlot, outLenSlot)
 			inst.freeInWasm(callCtx, outPtrSlot, 4)
 			inst.freeInWasm(callCtx, outLenSlot, 4)
 			errMsg := "rdp authentication failed"
@@ -258,7 +268,7 @@ func (p *Plugin) runConnector(ctx context.Context, inst *wasmInstance, config []
 
 		case stateNeedSend:
 			// Read output bytes from WASM and send to server
-			sendData := readOutputFromSlots(inst, outPtrSlot, outLenSlot, callCtx)
+			sendData := readOutputFromSlots(callCtx, inst, outPtrSlot, outLenSlot)
 			inst.freeInWasm(callCtx, outPtrSlot, 4)
 			inst.freeInWasm(callCtx, outLenSlot, 4)
 
@@ -275,7 +285,7 @@ func (p *Plugin) runConnector(ctx context.Context, inst *wasmInstance, config []
 			inst.freeInWasm(callCtx, outLenSlot, 4)
 
 			// Read from server
-			buf := make([]byte, 16384) // 16KB buffer
+			buf := make([]byte, tcpReadBufSize)
 			n, readErr := inst.activeConn().Read(buf)
 			if readErr != nil {
 				return banner, fmt.Errorf("connection error: tcp read: %w", readErr)
@@ -287,6 +297,10 @@ func (p *Plugin) runConnector(ctx context.Context, inst *wasmInstance, config []
 			}
 
 		case stateNeedTLSUpgrade:
+			// Active TLS upgrade path: the Rust connector returns stateNeedTLSUpgrade
+			// and Go performs the TLS handshake here. A parallel hostTlsUpgrade host
+			// function exists in wasm.go for potential future use by the Rust connector
+			// (e.g., CredSSP implementations that need WASM-initiated TLS upgrade).
 			inst.freeInWasm(callCtx, outPtrSlot, 4)
 			inst.freeInWasm(callCtx, outLenSlot, 4)
 
@@ -313,7 +327,7 @@ func (p *Plugin) runConnector(ctx context.Context, inst *wasmInstance, config []
 
 // readOutputFromSlots reads the output pointer and length from WASM memory slots,
 // then reads the actual output data. Returns the output bytes (may be empty).
-func readOutputFromSlots(inst *wasmInstance, outPtrSlot, outLenSlot uint32, ctx context.Context) []byte {
+func readOutputFromSlots(ctx context.Context, inst *wasmInstance, outPtrSlot, outLenSlot uint32) []byte {
 	outPtrBytes, err := inst.readFromWasm(outPtrSlot, 4)
 	if err != nil {
 		return nil
