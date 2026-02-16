@@ -1,0 +1,1 @@
+/Users/engineer/github/praetorian-development-platform/brutus/.worktrees/rdp-wasm-ironrdp/internal/plugins/rdp/rust/target/wasm32-wasip1/release/ironrdp_wasm.wasm: /Users/engineer/github/praetorian-development-platform/brutus/.worktrees/rdp-wasm-ironrdp/internal/plugins/rdp/rust/src/lib.rs
