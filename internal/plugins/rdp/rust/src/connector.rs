@@ -278,8 +278,6 @@ impl ConnectorHandle {
     /// CredsspSequence with NTLMv2 auth, processes the initial (empty) TsRequest
     /// to generate the NTLM Negotiate message, and returns it for sending.
     fn step_credssp_init(&mut self) -> Result<(u32, Vec<u8>), String> {
-        host_io::log_msg(1, "CredSSP phase entered - initializing NTLMv2 auth");
-
         // Get the selected protocol from the connector state
         let selected_protocol = self.get_selected_protocol()?;
 
@@ -420,11 +418,11 @@ impl ConnectorHandle {
                 self.process_credssp_ts_request(ts_request)
             }
             None => {
-                // EarlyUserAuthResult received and CredSSP is finished
-                self.credssp_sequence = None;
-                self.connector.mark_credssp_as_done();
-                self.phase = Phase::Connector;
-                self.step_connector(&[])
+                // EarlyUserAuthResult::Success received — authentication succeeded.
+                // For auth-only testing, we stop here rather than continuing into
+                // MCS/GCC session negotiation. The server confirmed valid credentials.
+                self.phase = Phase::Connected;
+                Ok((STATE_CONNECTED, Vec::new()))
             }
         }
     }

@@ -32,7 +32,7 @@ extern "C" {
     /// level: 0=debug, 1=info, 2=warn, 3=error
     pub fn host_log(level: u32, msg_ptr: u32, msg_len: u32);
 
-    /// Get the TLS server's public key (SubjectPublicKeyInfo DER).
+    /// Get the TLS server's SubjectPublicKey BIT STRING contents (raw key bytes).
     /// Writes up to buf_len bytes to buf_ptr.
     /// Returns bytes written on success, -1 on error.
     pub fn host_get_tls_server_pubkey(buf_ptr: u32, buf_len: u32) -> i32;
@@ -81,7 +81,7 @@ pub fn log_msg(level: u32, msg: &str) {
     unsafe { host_log(level, msg.as_ptr() as u32, msg.len() as u32) }
 }
 
-/// Safe wrapper: get TLS server public key (SubjectPublicKeyInfo DER).
+/// Safe wrapper: get TLS server's SubjectPublicKey BIT STRING contents (raw key bytes).
 pub fn get_tls_server_pubkey() -> Result<Vec<u8>, &'static str> {
     // Allocate a 4KB buffer for the public key (more than enough for RSA/EC keys)
     let mut buf = vec![0u8; 4096];

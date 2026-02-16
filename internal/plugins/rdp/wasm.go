@@ -18,8 +18,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/asn1"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -315,12 +317,20 @@ func hostRandomFill(ctx context.Context, m api.Module, bufPtr, bufLen uint32) in
 
 // hostLog: WASM sends a log message to Go.
 func hostLog(ctx context.Context, m api.Module, level, msgPtr, msgLen uint32) {
-	// Silently ignore logs in production — could add debug logging later
+	data, ok := m.Memory().Read(msgPtr, msgLen)
+	if ok {
+		fmt.Fprintf(os.Stderr, "[wasm] %s\n", string(data))
+	}
 }
 
-// hostGetTlsServerPubkey: WASM calls this to get the TLS server's public key.
+// hostGetTlsServerPubkey: WASM calls this to get the server's public key for CredSSP.
 // Returns bytes written to buf, or -1 on error.
-// The server public key is needed for CredSSP authentication (SubjectPublicKeyInfo DER bytes).
+//
+// Extracts the SubjectPublicKey BIT STRING contents from the server certificate's
+// SubjectPublicKeyInfo. This matches IronRDP's native extract_tls_server_public_key
+// which uses subject_public_key_info.subject_public_key.as_bytes().
+// For CredSSP, sspi-rs uses these raw key bytes in the pubKeyAuth computation:
+// v1-4: encrypt(public_key), v5+: encrypt(SHA-256(magic + nonce + public_key)).
 func hostGetTlsServerPubkey(ctx context.Context, m api.Module, bufPtr, bufLen uint32) int32 {
 	inst := getInstance(ctx)
 	if inst == nil || inst.tls == nil {
@@ -332,14 +342,23 @@ func hostGetTlsServerPubkey(ctx context.Context, m api.Module, bufPtr, bufLen ui
 		return -1
 	}
 
-	// CredSSP needs the SubjectPublicKeyInfo DER bytes
-	pubKeyDER := state.PeerCertificates[0].RawSubjectPublicKeyInfo
-	if uint32(len(pubKeyDER)) > bufLen {
+	// Parse SubjectPublicKeyInfo to extract the SubjectPublicKey BIT STRING.
+	// SubjectPublicKeyInfo ::= SEQUENCE { algorithm AlgorithmIdentifier, subjectPublicKey BIT STRING }
+	var spki struct {
+		Algorithm asn1.RawValue
+		PublicKey asn1.BitString
+	}
+	if _, err := asn1.Unmarshal(state.PeerCertificates[0].RawSubjectPublicKeyInfo, &spki); err != nil {
+		return -1
+	}
+	pubKeyBytes := spki.PublicKey.Bytes
+
+	if uint32(len(pubKeyBytes)) > bufLen {
 		return -1 // Buffer too small
 	}
 
-	if !m.Memory().Write(bufPtr, pubKeyDER) {
+	if !m.Memory().Write(bufPtr, pubKeyBytes) {
 		return -1
 	}
-	return int32(len(pubKeyDER))
+	return int32(len(pubKeyBytes))
 }

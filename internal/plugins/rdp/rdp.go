@@ -278,7 +278,19 @@ func (p *Plugin) runConnector(ctx context.Context, inst *wasmInstance, config []
 					return banner, fmt.Errorf("connection error: tcp write: %w", writeErr)
 				}
 			}
-			// Continue loop — next step will read the server response
+
+			// After sending, always read the server response immediately.
+			// Both the Connector and CredSSP phases expect input on the next
+			// step call — passing empty input causes decode errors.
+			buf := make([]byte, tcpReadBufSize)
+			n, readErr := inst.activeConn().Read(buf)
+			if readErr != nil {
+				return banner, fmt.Errorf("connection error: tcp read: %w", readErr)
+			}
+			inputPtr, inputLen, err = inst.writeToWasm(callCtx, buf[:n])
+			if err != nil {
+				return banner, fmt.Errorf("write recv to wasm: %w", err)
+			}
 
 		case stateNeedRecv:
 			inst.freeInWasm(callCtx, outPtrSlot, 4)
