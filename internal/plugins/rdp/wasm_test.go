@@ -185,3 +185,93 @@ func TestWasmExportsExist(t *testing.T) {
 		assert.NotNil(t, fn, "required export %q must exist", name)
 	}
 }
+
+// TestWasmInstanceIsolation validates D1 design decision: each WASM instance
+// has isolated linear memory. Writing to one instance must not affect another.
+func TestWasmInstanceIsolation(t *testing.T) {
+	ctx := context.Background()
+	eng, err := initEngine()
+	require.NoError(t, err)
+
+	// Create two separate instances
+	inst1, err := newInstance(ctx, eng, nil)
+	require.NoError(t, err)
+	defer inst1.close(ctx)
+
+	inst2, err := newInstance(ctx, eng, nil)
+	require.NoError(t, err)
+	defer inst2.close(ctx)
+
+	// Write different data to each instance
+	data1 := []byte("instance-one-data")
+	ptr1, len1, err := inst1.writeToWasm(ctx, data1)
+	require.NoError(t, err)
+
+	data2 := []byte("instance-two-data")
+	ptr2, len2, err := inst2.writeToWasm(ctx, data2)
+	require.NoError(t, err)
+
+	// Read back from instance 1 — should still have its original data
+	readBack1, err := inst1.readFromWasm(ptr1, len1)
+	require.NoError(t, err)
+	assert.Equal(t, data1, readBack1, "instance 1 memory must not be affected by instance 2")
+
+	// Read back from instance 2 — should have its own data
+	readBack2, err := inst2.readFromWasm(ptr2, len2)
+	require.NoError(t, err)
+	assert.Equal(t, data2, readBack2, "instance 2 memory must not be affected by instance 1")
+
+	// Verify the two instances have distinct module references
+	assert.NotEqual(t, inst1.mod, inst2.mod, "instances must have distinct module references")
+
+	// Clean up
+	inst1.freeInWasm(ctx, ptr1, len1)
+	inst2.freeInWasm(ctx, ptr2, len2)
+}
+
+// TestWasmInstanceClose verifies that closing an instance does not panic
+// and subsequent operations on the engine still work.
+func TestWasmInstanceClose(t *testing.T) {
+	ctx := context.Background()
+	eng, err := initEngine()
+	require.NoError(t, err)
+
+	// Create and immediately close an instance
+	inst, err := newInstance(ctx, eng, nil)
+	require.NoError(t, err)
+	err = inst.close(ctx)
+	assert.NoError(t, err, "close should not error")
+
+	// Engine should still be usable for new instances
+	inst2, err := newInstance(ctx, eng, nil)
+	require.NoError(t, err, "engine must remain usable after closing an instance")
+	defer inst2.close(ctx)
+
+	// New instance should work normally
+	testData := []byte("still works")
+	ptr, length, err := inst2.writeToWasm(ctx, testData)
+	require.NoError(t, err)
+	readBack, err := inst2.readFromWasm(ptr, length)
+	require.NoError(t, err)
+	assert.Equal(t, testData, readBack)
+	inst2.freeInWasm(ctx, ptr, length)
+}
+
+// TestWasmContextKey verifies the context-based instance dispatch mechanism.
+func TestWasmContextKey(t *testing.T) {
+	ctx := context.Background()
+	eng, err := initEngine()
+	require.NoError(t, err)
+
+	inst, err := newInstance(ctx, eng, nil)
+	require.NoError(t, err)
+	defer inst.close(ctx)
+
+	// Without instance in context, getInstance returns nil
+	assert.Nil(t, getInstance(ctx), "getInstance should return nil for bare context")
+
+	// With instance in context, getInstance returns it
+	callCtx := withInstance(ctx, inst)
+	retrieved := getInstance(callCtx)
+	assert.Equal(t, inst, retrieved, "getInstance should return the stored instance")
+}
