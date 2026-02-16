@@ -69,7 +69,7 @@ var (
 	engineErr  error
 )
 
-// initEngine compiles the WASM module once (D1: singleton at init time).
+// initEngine compiles the WASM module once on first use (lazy, not at init time).
 // Host functions are registered once; per-call instance state is accessed via context.
 func initEngine() (*wasmEngine, error) {
 	engineOnce.Do(func() {
