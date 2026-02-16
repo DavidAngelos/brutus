@@ -107,22 +107,23 @@ Download from [GitHub Releases](https://github.com/praetorian-inc/brutus/release
 
 ```bash
 # Linux (amd64)
-curl -L https://github.com/praetorian-inc/brutus/releases/latest/download/brutus-linux-amd64 -o brutus
-chmod +x brutus
+curl -L https://github.com/praetorian-inc/brutus/releases/latest/download/brutus-linux-amd64.tar.gz | tar xz
 sudo mv brutus /usr/local/bin/
 
 # macOS (Apple Silicon)
-curl -L https://github.com/praetorian-inc/brutus/releases/latest/download/brutus-darwin-arm64 -o brutus
-chmod +x brutus
+curl -L https://github.com/praetorian-inc/brutus/releases/latest/download/brutus-darwin-arm64.tar.gz | tar xz
 sudo mv brutus /usr/local/bin/
 
 # macOS (Intel)
-curl -L https://github.com/praetorian-inc/brutus/releases/latest/download/brutus-darwin-amd64 -o brutus
-chmod +x brutus
+curl -L https://github.com/praetorian-inc/brutus/releases/latest/download/brutus-darwin-amd64.tar.gz | tar xz
 sudo mv brutus /usr/local/bin/
+```
 
+```powershell
 # Windows (PowerShell)
-Invoke-WebRequest -Uri https://github.com/praetorian-inc/brutus/releases/latest/download/brutus-windows-amd64.exe -OutFile brutus.exe
+Invoke-WebRequest -Uri https://github.com/praetorian-inc/brutus/releases/latest/download/brutus-windows-amd64.zip -OutFile brutus.zip
+Expand-Archive -Path brutus.zip -DestinationPath .
+Remove-Item brutus.zip
 ```
 
 ### Go Install
