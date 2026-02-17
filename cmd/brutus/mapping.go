@@ -37,6 +37,7 @@ func mapServiceToProtocol(service string) string {
 		"ftp":    "ftp",
 		"telnet": "telnet",
 		"vnc":    "vnc",
+		"rdp":    "rdp",
 
 		// Enterprise
 		"smb":   "smb",

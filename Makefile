@@ -1,7 +1,7 @@
 # Makefile for Brutus
 # Modern credential brute-forcing library in pure Go
 
-.PHONY: all build clean test test-integration lint install help
+.PHONY: all build build-wasm clean test test-integration lint install help
 
 # Build configuration
 BINARY_NAME := brutus
@@ -26,6 +26,11 @@ build:
 	@echo "Building $(BINARY_NAME) $(VERSION)..."
 	GOWORK=off CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(BINARY_NAME) ./cmd/brutus
 	@echo "Built: $(BINARY_NAME)"
+
+# Build IronRDP WASM module (requires Rust toolchain with wasm32-wasip1 target)
+build-wasm:
+	@echo "Building IronRDP WASM module..."
+	@cd internal/plugins/rdp/rust && bash build.sh
 
 # Build for all platforms
 build-all: $(BUILD_DIR)
@@ -203,6 +208,7 @@ help:
 	@echo ""
 	@echo "Build targets:"
 	@echo "  build        Build single static binary (default)"
+	@echo "  build-wasm   Build IronRDP WASM module (requires Rust)"
 	@echo "  build-all    Build for all platforms"
 	@echo "  install      Install to GOPATH/bin"
 	@echo ""
