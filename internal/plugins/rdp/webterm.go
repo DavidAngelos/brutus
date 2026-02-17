@@ -64,6 +64,71 @@ func openBrowser(url string) {
 	_ = cmd.Start()
 }
 
+// sessionManager holds the active RDP session and allows reconnection.
+type sessionManager struct {
+	mu      sync.RWMutex
+	sess    *InteractiveSession
+	target  string
+	timeout time.Duration
+}
+
+// Session returns the current active session.
+func (m *sessionManager) Session() *InteractiveSession {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.sess
+}
+
+// Reconnect closes the old session and creates a new one with sticky keys.
+func (m *sessionManager) Reconnect(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Close old session
+	if m.sess != nil {
+		m.sess.Close()
+	}
+
+	// Create new session
+	newSess, sessErr := NewInteractiveSession(ctx, m.target, m.timeout, 1024, 768)
+	if sessErr != nil {
+		return fmt.Errorf("reconnect failed: %w", sessErr)
+	}
+
+	// Wait for login screen
+	time.Sleep(3 * time.Second)
+	newSess.WaitForFrame(2 * time.Second)
+
+	// Trigger sticky keys (5x Shift)
+	for i := 0; i < 5; i++ {
+		if sendErr := newSess.SendKey(leftShiftScancode, true); sendErr != nil {
+			newSess.Close()
+			return fmt.Errorf("shift press: %w", sendErr)
+		}
+		time.Sleep(50 * time.Millisecond)
+		if sendErr := newSess.SendKey(leftShiftScancode, false); sendErr != nil {
+			newSess.Close()
+			return fmt.Errorf("shift release: %w", sendErr)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	time.Sleep(1 * time.Second)
+	newSess.WaitForFrame(2 * time.Second)
+
+	m.sess = newSess
+	return nil
+}
+
+// Close closes the current session if any.
+func (m *sessionManager) Close() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sess != nil {
+		m.sess.Close()
+	}
+}
+
 // RunWebTerminal connects to an RDP target via sticky keys and serves an
 // interactive web terminal on localhost. Opens a browser-controllable RDP
 // session with live screen streaming, keyboard, and mouse input.
@@ -74,7 +139,13 @@ func RunWebTerminal(ctx context.Context, target string, timeout time.Duration, o
 	if err != nil {
 		return fmt.Errorf("connection failed: %w", err)
 	}
-	defer sess.Close()
+
+	mgr := &sessionManager{
+		sess:    sess,
+		target:  target,
+		timeout: timeout,
+	}
+	defer mgr.Close()
 
 	// Wait for initial screen
 	fmt.Fprintf(os.Stderr, "[*] Waiting for login screen...\n")
@@ -128,16 +199,39 @@ func RunWebTerminal(ctx context.Context, target string, timeout time.Duration, o
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		handleWebSocket(w, r, sess)
+		handleWebSocket(w, r, mgr)
 	})
 	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
+		curSess := mgr.Session()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"width":  sess.Width(),
-			"height": sess.Height(),
+			"width":  curSess.Width(),
+			"height": curSess.Height(),
 			"target": target,
 			"token":  token,
 		})
+	})
+	mux.HandleFunc("/reconnect", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if r.URL.Query().Get("token") != token {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		fmt.Fprintf(os.Stderr, "[*] Reconnecting to %s...\n", target)
+		if reconnErr := mgr.Reconnect(ctx); reconnErr != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": reconnErr.Error()})
+			fmt.Fprintf(os.Stderr, "[!] Reconnect failed: %v\n", reconnErr)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "[+] Reconnected successfully.\n")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 	server := &http.Server{Handler: mux}
 
@@ -166,10 +260,10 @@ func RunWebTerminal(ctx context.Context, target string, timeout time.Duration, o
 
 // handleWebSocket implements a simple WebSocket handler without external dependencies.
 // Uses the standard HTTP upgrade mechanism per RFC 6455.
-func handleWebSocket(w http.ResponseWriter, r *http.Request, sess *InteractiveSession) {
+func handleWebSocket(w http.ResponseWriter, r *http.Request, mgr *sessionManager) {
 	// Perform WebSocket handshake
-	conn, err := upgradeWebSocket(w, r)
-	if err != nil {
+	conn, wsErr := upgradeWebSocket(w, r)
+	if wsErr != nil {
 		return
 	}
 	defer conn.Close()
@@ -179,7 +273,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, sess *InteractiveSe
 
 	// Start frame streaming goroutine
 	var wsMu sync.Mutex
-	go streamFrames(ctx, cancel, conn, &wsMu, sess)
+	go streamFrames(ctx, cancel, conn, &wsMu, mgr)
 
 	// Read input from browser
 	for {
@@ -189,15 +283,17 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, sess *InteractiveSe
 		default:
 		}
 
-		msg, err := readWSMessage(conn)
-		if err != nil {
+		msg, readErr := readWSMessage(conn)
+		if readErr != nil {
 			return
 		}
 
 		var wsMsg wsMessage
-		if err := json.Unmarshal(msg, &wsMsg); err != nil {
+		if unmarshalErr := json.Unmarshal(msg, &wsMsg); unmarshalErr != nil {
 			continue
 		}
+
+		curSess := mgr.Session()
 
 		switch wsMsg.Type {
 		case "key":
@@ -208,7 +304,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, sess *InteractiveSe
 				}
 			}
 			if sc != 0 {
-				_ = sess.SendKey(sc, wsMsg.Pressed)
+				_ = curSess.SendKey(sc, wsMsg.Pressed)
 			}
 
 		case "mouse":
@@ -233,13 +329,13 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, sess *InteractiveSe
 				evType = 0
 				button = 0 // move only
 			}
-			_ = sess.SendMouse(wsMsg.X, wsMsg.Y, button, evType)
+			_ = curSess.SendMouse(wsMsg.X, wsMsg.Y, button, evType)
 		}
 	}
 }
 
 // streamFrames continuously captures the RDP screen and sends JPEG frames over WebSocket.
-func streamFrames(ctx context.Context, cancel context.CancelFunc, conn net.Conn, mu *sync.Mutex, sess *InteractiveSession) {
+func streamFrames(ctx context.Context, cancel context.CancelFunc, conn net.Conn, mu *sync.Mutex, mgr *sessionManager) {
 	ticker := time.NewTicker(100 * time.Millisecond) // ~10 FPS
 	defer ticker.Stop()
 
@@ -252,9 +348,11 @@ func streamFrames(ctx context.Context, cancel context.CancelFunc, conn net.Conn,
 		case <-ticker.C:
 		}
 
+		curSess := mgr.Session()
+
 		// Check for pump errors and notify browser
 		if !pumpErrSent {
-			if pumpErr := sess.PumpError(); pumpErr != nil {
+			if pumpErr := curSess.PumpError(); pumpErr != nil {
 				errPayload, _ := json.Marshal(map[string]string{
 					"type":  "error",
 					"error": pumpErr.Error(),
@@ -266,14 +364,14 @@ func streamFrames(ctx context.Context, cancel context.CancelFunc, conn net.Conn,
 			}
 		}
 
-		frame, err := sess.CaptureFrame()
-		if err != nil {
+		frame, captureErr := curSess.CaptureFrame()
+		if captureErr != nil {
 			continue
 		}
 
-		// Encode RGBA → JPEG
-		jpegData, err := encodeJPEG(frame, sess.Width(), sess.Height())
-		if err != nil {
+		// Encode RGBA to JPEG
+		jpegData, encodeErr := encodeJPEG(frame, curSess.Width(), curSess.Height())
+		if encodeErr != nil {
 			continue
 		}
 
@@ -282,10 +380,10 @@ func streamFrames(ctx context.Context, cancel context.CancelFunc, conn net.Conn,
 		payload := []byte(`{"type":"frame","data":"` + b64 + `"}`)
 
 		mu.Lock()
-		err = writeWSMessage(conn, payload)
+		writeErr := writeWSMessage(conn, payload)
 		mu.Unlock()
 
-		if err != nil {
+		if writeErr != nil {
 			cancel()
 			return
 		}

@@ -73,6 +73,18 @@ body {
     text-align: center;
     word-break: break-word;
 }
+#reconnect-btn {
+    margin-top: 12px;
+    padding: 8px 24px;
+    background: #2b8a3e;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+}
+#reconnect-btn:hover { background: #2f9e44; }
+#reconnect-btn:disabled { background: #555; cursor: not-allowed; }
 canvas {
     cursor: default;
     image-rendering: auto;
@@ -104,6 +116,7 @@ canvas {
     <div id="disconnect-overlay">
         <span>Session Disconnected</span>
         <span class="detail" id="disconnect-detail"></span>
+        <button id="reconnect-btn">Reconnect</button>
     </div>
 </div>
 <div id="footer">
@@ -122,12 +135,14 @@ canvas {
     const resEl = document.getElementById('resolution');
     const overlayEl = document.getElementById('disconnect-overlay');
     const detailEl = document.getElementById('disconnect-detail');
+    const reconnectBtn = document.getElementById('reconnect-btn');
 
     let ws = null;
     let frameCount = 0;
     let lastFpsTime = Date.now();
     let screenWidth = 1024;
     let screenHeight = 768;
+    let currentToken = null;
 
     // Fetch server info to get WebSocket token
     fetch('/info')
@@ -139,7 +154,8 @@ canvas {
             canvas.height = screenHeight;
             targetEl.textContent = info.target;
             resEl.textContent = screenWidth + 'x' + screenHeight;
-            connect(info.token);
+            currentToken = info.token;
+            connect(currentToken);
         })
         .catch(err => {
             statusEl.textContent = 'Error: ' + err;
@@ -183,6 +199,41 @@ canvas {
         statusEl.className = 'status status-disconnected';
         detailEl.textContent = reason;
         overlayEl.classList.add('visible');
+    }
+
+    reconnectBtn.addEventListener('click', doReconnect);
+
+    function doReconnect() {
+        reconnectBtn.disabled = true;
+        reconnectBtn.textContent = 'Reconnecting...';
+        statusEl.textContent = 'Reconnecting...';
+        statusEl.className = 'status status-connecting';
+
+        // Close existing WebSocket
+        if (ws) {
+            ws.onclose = null; // prevent triggering disconnect again
+            ws.close();
+            ws = null;
+        }
+
+        // Call /reconnect endpoint
+        fetch('/reconnect?token=' + encodeURIComponent(currentToken), { method: 'POST' })
+            .then(function(r) {
+                if (!r.ok) return r.json().then(function(j) { return Promise.reject(new Error(j.error || 'Reconnect failed')); });
+                return r.json();
+            })
+            .then(function() {
+                // Hide overlay, reconnect WebSocket
+                overlayEl.classList.remove('visible');
+                reconnectBtn.disabled = false;
+                reconnectBtn.textContent = 'Reconnect';
+                connect(currentToken);
+            })
+            .catch(function(err) {
+                detailEl.textContent = 'Reconnect failed: ' + err.message;
+                reconnectBtn.disabled = false;
+                reconnectBtn.textContent = 'Reconnect';
+            });
     }
 
     function renderFrame(b64data) {
