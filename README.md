@@ -477,9 +477,7 @@ naabu -host 192.168.1.0/24 -p 80,443,8080 -silent | \
 
 ---
 
-## Known Limitations
-
-### RDP: Sticky Keys Backdoor Detection & Exploitation
+## RDP: Sticky Keys Backdoor Detection & Exploitation
 
 Brutus includes automatic detection of the **sticky keys backdoor** (MITRE ATT&CK [T1546.008](https://attack.mitre.org/techniques/T1546/008/)) on RDP targets. This pre-authentication check runs on non-NLA RDP targets — no credentials required.
 
@@ -508,7 +506,7 @@ sethc.exe has been replaced with cmd.exe or similar.
 SYSTEM-level unauthenticated access available via 5x Shift.
 ```
 
-#### Command Execution via Sticky Keys (`--sticky-keys-exec`)
+### Command Execution via Sticky Keys (`--sticky-keys-exec`)
 
 Once a backdoor is detected, execute a command on the remote system through the pre-auth command prompt:
 
@@ -523,7 +521,7 @@ brutus --target 10.0.0.50:3389 --protocol rdp --sticky-keys \
 
 This connects, triggers the backdoor, types the command, presses Enter, waits for output, and saves a PNG screenshot of the result.
 
-#### Interactive Web Terminal (`--sticky-keys-web`)
+### Interactive Web Terminal (`--sticky-keys-web`)
 
 Launch a browser-based RDP viewer for live interaction with the backdoor command prompt:
 
@@ -536,11 +534,11 @@ This starts a local HTTP server with:
 - **Live screen streaming** at ~10 FPS (JPEG over WebSocket)
 - **Full keyboard forwarding** (PS/2 scancodes mapped from browser KeyboardEvent)
 - **Mouse support** (click, move, right-click)
-- **Connection status** with disconnect overlay showing error details
+- **Connection status** with disconnect overlay and reconnect button
 
-Open the displayed URL (e.g., `http://127.0.0.1:<port>`) in any browser to interact with the remote RDP session.
+Open the displayed URL (e.g., `http://127.0.0.1:<port>`) in any browser to interact with the remote RDP session. If the session disconnects due to server-side idle timeout, click **Reconnect** to establish a new session.
 
-> **Note:** Non-NLA RDP sessions have a server-side idle timeout (Windows default varies by configuration, typically controlled by Group Policy at `Computer Configuration > Administrative Templates > Remote Desktop Services > Session Time Limits`). If the session disconnects, the web terminal shows a "Session Disconnected" overlay. To extend the timeout on a test target, set `MaxIdleTime` to `0` in the registry:
+> **Note:** Non-NLA RDP sessions have a server-side idle timeout (Windows default varies by configuration, typically controlled by Group Policy at `Computer Configuration > Administrative Templates > Remote Desktop Services > Session Time Limits`). To extend the timeout on a test target, set `MaxIdleTime` to `0` in the registry:
 >
 > ```
 > HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\MaxIdleTime = 0 (DWORD)
@@ -550,8 +548,12 @@ Open the displayed URL (e.g., `http://127.0.0.1:<port>`) in any browser to inter
 
 **Technical implementation:** RDP protocol support uses [IronRDP](https://github.com/Devolutions/IronRDP) (Rust) compiled to WebAssembly and executed via [wazero](https://github.com/tetragonalworks/wazero), maintaining Brutus's zero-CGO, single-binary design.
 
+---
+
+## Known Limitations
+
 ### Browser Plugin
 
 - Requires Chrome/Chromium installed locally
-- Headless mode may not work on all systems 
+- Headless mode may not work on all systems
 - Some JavaScript-heavy login pages may require additional wait time
