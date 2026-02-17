@@ -392,8 +392,11 @@ func classifyError(err error) error {
 }
 
 // shouldRunStickyKeysCheck returns true if sticky keys detection is enabled.
+// This activates when ANTHROPIC_API_KEY is set, which is also required by
+// the --experimental-ai CLI flag. The heuristic detection runs regardless;
+// Vision API confirmation only fires when the key is present.
 func shouldRunStickyKeysCheck() bool {
-	return os.Getenv("BRUTUS_RDP_STICKY_KEYS") == "1"
+	return os.Getenv("ANTHROPIC_API_KEY") != ""
 }
 
 // runStickyKeysCheck performs sticky keys detection on a separate connection.
