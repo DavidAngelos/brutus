@@ -12,8 +12,8 @@ use ironrdp_connector::credssp::CredsspSequence;
 use ironrdp_connector::sspi::credssp::TsRequest;
 use ironrdp_connector::sspi::generator::GeneratorState;
 use ironrdp_connector::{
-    ClientConnector, ClientConnectorState, Config, ConnectorErrorKind, Credentials, DesktopSize,
-    Sequence, ServerName, State,
+    ClientConnector, ClientConnectorState, Config, ConnectionResult, ConnectorErrorKind,
+    Credentials, DesktopSize, Sequence, ServerName, State,
 };
 use ironrdp_pdu::ironrdp_core::WriteBuf;
 use ironrdp_pdu::nego;
@@ -36,6 +36,9 @@ pub struct ConnectorConfig {
     pub username: String,
     pub password: String,
     pub domain: String,
+    /// When true, skip NLA/CredSSP authentication (for non-NLA session connections).
+    #[serde(default)]
+    pub skip_auth: bool,
 }
 
 /// Internal phase of the connector.
@@ -75,6 +78,9 @@ pub struct ConnectorHandle {
     credssp_sequence: Option<CredsspSequence>,
     /// Server address (host:port) for CredSSP server name resolution.
     server_addr: String,
+    /// Connection result extracted when connector reaches Connected state.
+    /// Consumed by `take_connection_result()` to create a SessionHandle.
+    connection_result: Option<ConnectionResult>,
 }
 
 impl ConnectorHandle {
@@ -89,6 +95,21 @@ impl ConnectorHandle {
             Some(config.domain.clone())
         };
 
+        // When skip_auth is set, disable CredSSP and use empty credentials.
+        // This allows connecting to RDP servers with NLA disabled (e.g., for
+        // sticky keys detection where we only need to reach the login screen).
+        let credentials = if config.skip_auth {
+            Credentials::UsernamePassword {
+                username: String::new(),
+                password: String::new(),
+            }
+        } else {
+            Credentials::UsernamePassword {
+                username: config.username.clone(),
+                password: config.password.clone(),
+            }
+        };
+
         let ironrdp_config = Config {
             desktop_size: DesktopSize {
                 width: 1024,
@@ -96,11 +117,8 @@ impl ConnectorHandle {
             },
             desktop_scale_factor: 100,
             enable_tls: true,
-            enable_credssp: true,
-            credentials: Credentials::UsernamePassword {
-                username: config.username.clone(),
-                password: config.password.clone(),
-            },
+            enable_credssp: !config.skip_auth,
+            credentials,
             domain,
             client_build: 0,
             client_name: "brutus".to_string(),
@@ -135,6 +153,7 @@ impl ConnectorHandle {
             needs_input: false,
             credssp_sequence: None,
             server_addr: config.server,
+            connection_result: None,
         })
     }
 
@@ -237,6 +256,14 @@ impl ConnectorHandle {
                     "RDP server, state: {}",
                     self.connector.state().name()
                 );
+                // Extract the ConnectionResult from the Connected state.
+                // ClientConnectorState derives Default (with Consumed variant),
+                // so std::mem::take replaces it with Consumed and gives us the
+                // Connected { result } variant to destructure.
+                let state = std::mem::take(&mut self.connector.state);
+                if let ClientConnectorState::Connected { result } = state {
+                    self.connection_result = Some(result);
+                }
                 self.phase = Phase::Connected;
                 return Ok((STATE_CONNECTED, self.banner.as_bytes().to_vec()));
             }
@@ -425,6 +452,13 @@ impl ConnectorHandle {
                 Ok((STATE_CONNECTED, Vec::new()))
             }
         }
+    }
+
+    /// Take the connection result out of this handle (consuming it).
+    /// Returns None if the connector hasn't reached Connected state yet,
+    /// or if the result was already taken.
+    pub fn take_connection_result(&mut self) -> Option<ConnectionResult> {
+        self.connection_result.take()
     }
 
     /// Classify connector errors into auth failure vs connection errors.
