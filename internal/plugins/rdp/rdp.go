@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -71,6 +72,7 @@ type rdpConfig struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Domain   string `json:"domain"`
+	SkipAuth bool   `json:"skip_auth,omitempty"`
 }
 
 // Test attempts RDP authentication using NLA/CredSSP via the IronRDP WASM module.
@@ -151,6 +153,15 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	// Connection succeeded — authentication was valid
 	result.Success = true
 	result.Banner = banner
+
+	// Sticky keys detection: optionally run on a separate connection
+	if shouldRunStickyKeysCheck() {
+		stickyResult := p.runStickyKeysCheck(ctx, target, timeout)
+		if stickyResult != nil {
+			result.Banner = formatStickyKeysBanner(result.Banner, stickyResult)
+		}
+	}
+
 	result.Duration = time.Since(start)
 	return result
 }
@@ -378,4 +389,124 @@ func parseDomainUsername(username string) (domain, user string) {
 // classifyError classifies RDP errors using the shared brutus helper.
 func classifyError(err error) error {
 	return brutus.ClassifyAuthError(err, rdpAuthIndicators)
+}
+
+// shouldRunStickyKeysCheck returns true if sticky keys detection is enabled.
+func shouldRunStickyKeysCheck() bool {
+	return os.Getenv("BRUTUS_RDP_STICKY_KEYS") == "1"
+}
+
+// runStickyKeysCheck performs sticky keys detection on a separate connection.
+func (p *Plugin) runStickyKeysCheck(ctx context.Context, target string, timeout time.Duration) *StickyKeysResult {
+	host, port := brutus.ParseTarget(target, "3389")
+	addr := net.JoinHostPort(host, port)
+
+	eng, err := initEngine()
+	if err != nil {
+		return &StickyKeysResult{
+			Performed:  false,
+			SkipReason: fmt.Sprintf("wasm init: %v", err),
+		}
+	}
+
+	dialer := &net.Dialer{Timeout: timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return &StickyKeysResult{
+			Performed:  false,
+			SkipReason: fmt.Sprintf("connection failed: %v", err),
+		}
+	}
+	defer conn.Close()
+
+	inst, err := newInstance(ctx, eng, conn)
+	if err != nil {
+		return &StickyKeysResult{
+			Performed:  false,
+			SkipReason: fmt.Sprintf("wasm instance: %v", err),
+		}
+	}
+	defer inst.close(ctx)
+
+	stickyResult, err := p.runStickyKeysDetection(ctx, inst, addr)
+	if err != nil {
+		return &StickyKeysResult{
+			Performed:  false,
+			SkipReason: fmt.Sprintf("detection failed: %v", err),
+		}
+	}
+
+	return stickyResult
+}
+
+// runStickyKeysDetection performs the full detection sequence on a non-NLA connection.
+func (p *Plugin) runStickyKeysDetection(ctx context.Context, inst *wasmInstance, addr string) (*StickyKeysResult, error) {
+	result := &StickyKeysResult{Performed: true}
+
+	cfg := stickyKeysConfig{
+		Server:   addr,
+		Username: "",
+		Password: "",
+		Domain:   "",
+		SkipAuth: true,
+	}
+	configBytes, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("marshal config: %w", err)
+	}
+
+	connHandle, _, err := p.runConnectorForSession(ctx, inst, configBytes)
+	if err != nil {
+		result.Performed = false
+		result.SkipReason = fmt.Sprintf("connection failed: %v", err)
+		return result, nil
+	}
+
+	baseline, response, width, height, err := p.runSession(ctx, inst, connHandle, 1024, 768)
+	if err != nil {
+		result.Performed = false
+		result.SkipReason = fmt.Sprintf("session failed: %v", err)
+		return result, nil
+	}
+
+	visionAPIKey := os.Getenv("ANTHROPIC_API_KEY")
+	*result = runStickyKeysAnalysis(ctx, baseline, response, width, height, visionAPIKey)
+	result.Performed = true
+
+	return result, nil
+}
+
+// formatStickyKeysBanner appends sticky keys detection results to the banner.
+func formatStickyKeysBanner(existingBanner string, result *StickyKeysResult) string {
+	if result == nil || !result.Performed {
+		return existingBanner
+	}
+
+	banner := existingBanner
+	if banner != "" {
+		banner += "\n"
+	}
+
+	switch result.OverallVerdict {
+	case "backdoor_confirmed":
+		banner += fmt.Sprintf("[CRITICAL] Sticky keys backdoor CONFIRMED (confidence: %.0f%%)\n", result.Confidence*100)
+		banner += "sethc.exe has been replaced with cmd.exe or similar.\n"
+		banner += "SYSTEM-level unauthenticated access available via 5x Shift.\n"
+		banner += "B-TP: malicious persistence (T1546.008), forgotten password recovery, or pentest artifact.\n"
+		banner += "Remediation: Boot from Windows install media, restore original sethc.exe, or run sfc /scannow."
+	case "backdoor_likely":
+		banner += fmt.Sprintf("[HIGH] Sticky keys backdoor likely (confidence: %.0f%%)\n", result.Confidence*100)
+		banner += "A dark window appeared after 5x Shift on the login screen.\n"
+		banner += "Heuristic: " + result.HeuristicResult
+		if result.VisionResult != "" {
+			banner += " | Vision: " + result.VisionResult
+		}
+	case "vulnerable":
+		banner += "[INFO] Non-NLA RDP target. Sticky Keys triggers normally (no backdoor detected).\n"
+		banner += "Target is vulnerable if sethc.exe is later replaced."
+	case "clean":
+		banner += "[INFO] Sticky keys check: clean (no response to 5x Shift)."
+	}
+
+	return banner
 }
