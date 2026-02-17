@@ -15,12 +15,15 @@
 package rdp
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"image"
 	"image/png"
 	"os"
 	"time"
+
+	"github.com/praetorian-inc/brutus/internal/analyzers/vision"
 )
 
 // ExecResult holds the outcome of a sticky keys command execution.
@@ -28,12 +31,14 @@ type ExecResult struct {
 	BackdoorDetected bool
 	Command          string
 	ScreenshotPath   string // Path to PNG screenshot after command execution
+	Output           string // Terminal output text (populated when Vision API is enabled)
 	Error            string
 }
 
 // RunStickyKeysExec connects to an RDP target, triggers the sticky keys backdoor,
 // and if detected, types the specified command. Captures a screenshot of the result.
-func RunStickyKeysExec(ctx context.Context, target, command string, timeout time.Duration) *ExecResult {
+// When apiKey is non-empty, the screenshot is sent to Claude Vision to extract terminal text.
+func RunStickyKeysExec(ctx context.Context, target, command string, timeout time.Duration, apiKey string) *ExecResult {
 	result := &ExecResult{Command: command}
 
 	fmt.Fprintf(os.Stderr, "[*] Connecting to %s for sticky keys exploitation...\n", target)
@@ -127,6 +132,24 @@ func RunStickyKeysExec(ctx context.Context, target, command string, timeout time
 	result.ScreenshotPath = screenshotPath
 	fmt.Fprintf(os.Stderr, "[+] Screenshot saved to %s\n", screenshotPath)
 
+	// Use Claude Vision to read terminal output if API key is provided
+	if apiKey != "" {
+		fmt.Fprintf(os.Stderr, "[*] Sending screenshot to Claude Vision for text extraction...\n")
+		pngData, pngErr := encodePNG(frame, sess.Width(), sess.Height())
+		if pngErr != nil {
+			fmt.Fprintf(os.Stderr, "[!] Vision: failed to encode PNG: %v\n", pngErr)
+			return result
+		}
+		client := &vision.Client{APIKey: apiKey}
+		output, visionErr := client.ReadTerminalOutput(ctx, pngData)
+		if visionErr != nil {
+			fmt.Fprintf(os.Stderr, "[!] Vision: %v\n", visionErr)
+			return result
+		}
+		result.Output = output
+		fmt.Fprintf(os.Stderr, "[+] Terminal output:\n%s\n", output)
+	}
+
 	return result
 }
 
@@ -146,4 +169,20 @@ func saveRGBAScreenshot(rgba []byte, width, height uint32, path string) error {
 	defer f.Close()
 
 	return png.Encode(f, img)
+}
+
+// encodePNG encodes RGBA framebuffer data to PNG bytes in memory.
+func encodePNG(rgba []byte, width, height uint32) ([]byte, error) {
+	img := image.NewRGBA(image.Rect(0, 0, int(width), int(height)))
+	expectedLen := int(width) * int(height) * 4
+	if len(rgba) < expectedLen {
+		return nil, fmt.Errorf("frame too small: got %d bytes, expected %d", len(rgba), expectedLen)
+	}
+	copy(img.Pix, rgba[:expectedLen])
+
+	var buf bytes.Buffer
+	if encErr := png.Encode(&buf, img); encErr != nil {
+		return nil, encErr
+	}
+	return buf.Bytes(), nil
 }

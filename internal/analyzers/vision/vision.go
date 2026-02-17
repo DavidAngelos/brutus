@@ -322,6 +322,85 @@ func (c *Client) getTimeout() time.Duration {
 	return DefaultTimeout
 }
 
+// ReadTerminalOutput sends a screenshot of a terminal/command prompt to Claude Vision
+// and returns the text content visible on the screen.
+func (c *Client) ReadTerminalOutput(ctx context.Context, screenshot []byte) (string, error) {
+	imageData := base64.StdEncoding.EncodeToString(screenshot)
+
+	reqBody := visionRequest{
+		Model:     c.getModel(),
+		MaxTokens: 2000,
+		Messages: []visionMessage{
+			{
+				Role: "user",
+				Content: []contentBlock{
+					{
+						Type: "image",
+						Source: &imageSource{
+							Type:      "base64",
+							MediaType: "image/png",
+							Data:      imageData,
+						},
+					},
+					{
+						Type: "text",
+						Text: buildTerminalReadPrompt(),
+					},
+				},
+			},
+		},
+	}
+
+	jsonData, marshalErr := json.Marshal(reqBody)
+	if marshalErr != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", marshalErr)
+	}
+
+	endpoint := c.getEndpoint()
+	req, reqErr := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(jsonData))
+	if reqErr != nil {
+		return "", fmt.Errorf("failed to create request: %w", reqErr)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", c.APIKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	client := &http.Client{Timeout: c.getTimeout()}
+	resp, doErr := client.Do(req)
+	if doErr != nil {
+		return "", fmt.Errorf("claude api request failed: %w", doErr)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("claude api error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var apiResp visionResponse
+	if decodeErr := json.NewDecoder(resp.Body).Decode(&apiResp); decodeErr != nil {
+		return "", fmt.Errorf("failed to decode response: %w", decodeErr)
+	}
+
+	if len(apiResp.Content) == 0 {
+		return "", fmt.Errorf("empty response from claude")
+	}
+
+	return apiResp.Content[0].Text, nil
+}
+
+// buildTerminalReadPrompt creates the prompt for reading terminal output
+func buildTerminalReadPrompt() string {
+	return `Read the text visible on this terminal/command prompt screenshot.
+
+Transcribe ALL visible text exactly as it appears on screen, preserving line breaks.
+Include the command prompt, any commands that were typed, and all output.
+
+Return ONLY the text content. No commentary, no JSON wrapping, no explanations.
+Just the raw text visible on the terminal screen.`
+}
+
 // buildVisionPrompt creates the prompt for login page analysis
 func buildVisionPrompt() string {
 	return `Analyze this web page screenshot for a security assessment.

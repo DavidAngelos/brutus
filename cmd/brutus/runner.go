@@ -272,15 +272,24 @@ func runStickyKeysInteractive(target, protocol string, base *baseConfigOptions) 
 	}
 
 	if base.stickyKeysExec != "" {
-		execResult := rdp.RunStickyKeysExec(ctx, target, base.stickyKeysExec, base.timeout)
+		var execAPIKey string
+		if base.aiMode {
+			execAPIKey = base.anthropicKey
+		}
+		execResult := rdp.RunStickyKeysExec(ctx, target, base.stickyKeysExec, base.timeout, execAPIKey)
 		if execResult.Error != "" {
 			errMsg(base.useColor, "sticky keys exec: %s", execResult.Error)
 			result.Error = fmt.Errorf("%s", execResult.Error)
 			return []brutus.Result{result}, false
 		}
 		result.Success = execResult.BackdoorDetected
-		result.Banner = fmt.Sprintf("[INFO] Sticky keys exec: backdoor=%v, screenshot=%s",
-			execResult.BackdoorDetected, execResult.ScreenshotPath)
+		if execResult.Output != "" {
+			result.Banner = fmt.Sprintf("[INFO] Sticky keys exec: backdoor=%v, output:\n%s",
+				execResult.BackdoorDetected, execResult.Output)
+		} else {
+			result.Banner = fmt.Sprintf("[INFO] Sticky keys exec: backdoor=%v, screenshot=%s",
+				execResult.BackdoorDetected, execResult.ScreenshotPath)
+		}
 		return []brutus.Result{result}, execResult.BackdoorDetected
 	}
 
