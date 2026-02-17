@@ -22,8 +22,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
+)
+
+const (
+	defaultVisionModel    = "claude-sonnet-4-5-20250929"
+	maxVisionResponseSize = 64 * 1024 // 64KB limit for API response body
 )
 
 // analyzeStickyKeysVision sends the post-keystroke screenshot to Claude Vision API
@@ -36,8 +42,13 @@ func analyzeStickyKeysVision(ctx context.Context, pngData []byte, apiKey string)
 
 	b64Image := base64.StdEncoding.EncodeToString(pngData)
 
+	model := os.Getenv("BRUTUS_VISION_MODEL")
+	if model == "" {
+		model = defaultVisionModel
+	}
+
 	requestBody := map[string]interface{}{
-		"model":      "claude-sonnet-4-5-20250929",
+		"model":      model,
 		"max_tokens": 256,
 		"messages": []map[string]interface{}{
 			{
@@ -89,7 +100,7 @@ func analyzeStickyKeysVision(ctx context.Context, pngData []byte, apiKey string)
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxVisionResponseSize))
 	if err != nil {
 		return "", fmt.Sprintf("read error: %v", err)
 	}

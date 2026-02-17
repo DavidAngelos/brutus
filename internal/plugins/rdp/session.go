@@ -42,14 +42,8 @@ type StickyKeysResult struct {
 	VisionResult    string
 }
 
-// stickyKeysConfig is the JSON config for non-NLA WASM connector.
-type stickyKeysConfig struct {
-	Server   string `json:"server"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Domain   string `json:"domain"`
-	SkipAuth bool   `json:"skip_auth"`
-}
+// leftShiftScancode is the scancode for Left Shift key (used for sticky keys detection).
+const leftShiftScancode = 0x2A
 
 // runConnectorForSession drives the connector state machine and returns the connector handle
 // (for session handoff) instead of consuming it. Similar to runConnector but doesn't free the handle.
@@ -231,13 +225,13 @@ func (p *Plugin) runSession(ctx context.Context, inst *wasmInstance, connHandle 
 		return nil, nil, 0, 0, fmt.Errorf("capture baseline: %w", err)
 	}
 
-	// Send 5x Shift key (Left Shift scancode = 0x2A)
+	// Send 5x Shift key to trigger sticky keys
 	for i := 0; i < 5; i++ {
-		if keyErr := p.sendKey(ctx, inst, sessHandle, 0x2A, true); keyErr != nil {
+		if keyErr := p.sendKey(ctx, inst, sessHandle, leftShiftScancode, true); keyErr != nil {
 			return nil, nil, 0, 0, fmt.Errorf("send shift press %d: %w", i+1, keyErr)
 		}
 		time.Sleep(50 * time.Millisecond)
-		if keyErr := p.sendKey(ctx, inst, sessHandle, 0x2A, false); keyErr != nil {
+		if keyErr := p.sendKey(ctx, inst, sessHandle, leftShiftScancode, false); keyErr != nil {
 			return nil, nil, 0, 0, fmt.Errorf("send shift release %d: %w", i+1, keyErr)
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -268,6 +262,8 @@ func (p *Plugin) pumpSession(ctx context.Context, inst *wasmInstance, sessHandle
 	}
 
 	deadline := time.Now().Add(timeout)
+	// Reset read deadline when we exit so subsequent operations are not affected.
+	defer func() { _ = inst.activeConn().SetReadDeadline(time.Time{}) }()
 
 	for time.Now().Before(deadline) {
 		// Read data from server
@@ -291,8 +287,17 @@ func (p *Plugin) pumpSession(ctx context.Context, inst *wasmInstance, sessHandle
 			return fmt.Errorf("write to wasm: %w", err)
 		}
 
-		outPtrSlot, _, _ := inst.writeToWasm(callCtx, make([]byte, 4))
-		outLenSlot, _, _ := inst.writeToWasm(callCtx, make([]byte, 4))
+		outPtrSlot, _, err := inst.writeToWasm(callCtx, make([]byte, 4))
+		if err != nil {
+			inst.freeInWasm(callCtx, inputPtr, inputLen)
+			return fmt.Errorf("alloc out ptr: %w", err)
+		}
+		outLenSlot, _, err := inst.writeToWasm(callCtx, make([]byte, 4))
+		if err != nil {
+			inst.freeInWasm(callCtx, inputPtr, inputLen)
+			inst.freeInWasm(callCtx, outPtrSlot, 4)
+			return fmt.Errorf("alloc out len: %w", err)
+		}
 
 		results, err := sessionStepFn.Call(callCtx,
 			uint64(sessHandle),
@@ -321,7 +326,9 @@ func (p *Plugin) pumpSession(ctx context.Context, inst *wasmInstance, sessHandle
 			inst.freeInWasm(callCtx, outPtrSlot, 4)
 			inst.freeInWasm(callCtx, outLenSlot, 4)
 			if len(sendData) > 0 {
-				_, _ = inst.activeConn().Write(sendData)
+				if _, writeErr := inst.activeConn().Write(sendData); writeErr != nil {
+					return fmt.Errorf("tcp write: %w", writeErr)
+				}
 			}
 
 		case stateSessionNeedRecv:
@@ -352,8 +359,15 @@ func (p *Plugin) captureFrame(ctx context.Context, inst *wasmInstance, sessHandl
 		return nil, fmt.Errorf("session_get_frame not exported")
 	}
 
-	outPtrSlot, _, _ := inst.writeToWasm(callCtx, make([]byte, 4))
-	outLenSlot, _, _ := inst.writeToWasm(callCtx, make([]byte, 4))
+	outPtrSlot, _, err := inst.writeToWasm(callCtx, make([]byte, 4))
+	if err != nil {
+		return nil, fmt.Errorf("alloc out ptr: %w", err)
+	}
+	outLenSlot, _, err := inst.writeToWasm(callCtx, make([]byte, 4))
+	if err != nil {
+		inst.freeInWasm(callCtx, outPtrSlot, 4)
+		return nil, fmt.Errorf("alloc out len: %w", err)
+	}
 
 	results, err := getFrameFn.Call(callCtx, uint64(sessHandle), uint64(outPtrSlot), uint64(outLenSlot))
 	if err != nil {
@@ -395,8 +409,15 @@ func (p *Plugin) sendKey(ctx context.Context, inst *wasmInstance, sessHandle uin
 		pressedVal = 1
 	}
 
-	outPtrSlot, _, _ := inst.writeToWasm(callCtx, make([]byte, 4))
-	outLenSlot, _, _ := inst.writeToWasm(callCtx, make([]byte, 4))
+	outPtrSlot, _, err := inst.writeToWasm(callCtx, make([]byte, 4))
+	if err != nil {
+		return fmt.Errorf("alloc out ptr: %w", err)
+	}
+	outLenSlot, _, err := inst.writeToWasm(callCtx, make([]byte, 4))
+	if err != nil {
+		inst.freeInWasm(callCtx, outPtrSlot, 4)
+		return fmt.Errorf("alloc out len: %w", err)
+	}
 
 	results, err := sendKeyFn.Call(callCtx,
 		uint64(sessHandle),
@@ -418,7 +439,9 @@ func (p *Plugin) sendKey(ctx context.Context, inst *wasmInstance, sessHandle uin
 	inst.freeInWasm(callCtx, outLenSlot, 4)
 
 	if len(sendData) > 0 {
-		_, _ = inst.activeConn().Write(sendData)
+		if _, writeErr := inst.activeConn().Write(sendData); writeErr != nil {
+			return fmt.Errorf("tcp write: %w", writeErr)
+		}
 	}
 
 	if state == stateSessionError {

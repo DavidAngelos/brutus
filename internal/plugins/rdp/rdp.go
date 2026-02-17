@@ -443,7 +443,7 @@ func (p *Plugin) runStickyKeysCheck(ctx context.Context, target string, timeout 
 func (p *Plugin) runStickyKeysDetection(ctx context.Context, inst *wasmInstance, addr string) (*StickyKeysResult, error) {
 	result := &StickyKeysResult{Performed: true}
 
-	cfg := stickyKeysConfig{
+	cfg := rdpConfig{
 		Server:   addr,
 		Username: "",
 		Password: "",
@@ -461,6 +461,13 @@ func (p *Plugin) runStickyKeysDetection(ctx context.Context, inst *wasmInstance,
 		result.SkipReason = fmt.Sprintf("connection failed: %v", err)
 		return result, nil
 	}
+	// Ensure connector handle is freed after session use
+	callCtx := inst.callCtx(ctx)
+	defer func() {
+		if freeFn := inst.mod.ExportedFunction("connector_free"); freeFn != nil {
+			_, _ = freeFn.Call(callCtx, uint64(connHandle))
+		}
+	}()
 
 	baseline, response, width, height, err := p.runSession(ctx, inst, connHandle, 1024, 768)
 	if err != nil {
