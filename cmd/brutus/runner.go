@@ -152,6 +152,14 @@ func runSingleTarget(target, protocol, tlsMode string, base *baseConfigOptions, 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Propagate RDP sticky keys flags via context (not env vars)
+	if base.noVision {
+		ctx = brutus.ContextWithNoVision(ctx)
+	}
+	if base.noStickyKeys {
+		ctx = brutus.ContextWithNoStickyKeys(ctx)
+	}
+
 	// Run brute force with context
 	results, err := brutus.BruteWithContext(ctx, config)
 	if err != nil {

@@ -25,12 +25,12 @@ import (
 )
 
 const (
-	// darkThreshold: pixel brightness below this is considered "dark"
-	darkThreshold = 30
-	// minDarkRegionPercent: minimum percentage of new dark pixels for detection
-	minDarkRegionPercent = 2.0
-	// maxDarkRegionPercent: maximum percentage (above this, probably screen went black)
-	maxDarkRegionPercent = 80.0
+	// changeThreshold: per-pixel brightness difference to count as "changed"
+	changeThreshold = 30
+	// minChangedPercent: minimum percentage of changed pixels for detection
+	minChangedPercent = 2.0
+	// maxChangedPercent: maximum percentage (above this, probably full screen change)
+	maxChangedPercent = 80.0
 )
 
 // bitmapDiff computes the absolute difference between two RGBA buffers.
@@ -69,7 +69,14 @@ func maxByte(a, b byte) byte {
 	return b
 }
 
+// pixelBrightness returns the average brightness (0-255) of an RGBA pixel at offset i.
+func pixelBrightness(buf []byte, i int) int {
+	return (int(buf[i]) + int(buf[i+1]) + int(buf[i+2])) / 3
+}
+
 // analyzeStickyKeysResponse analyzes the difference between baseline and response frames.
+// It detects any new rectangular region (dark for cmd.exe, blue for PowerShell, etc.)
+// that appeared after sending 5x Shift.
 // Returns (verdict, confidence, description).
 func analyzeStickyKeysResponse(baseline, response []byte, width, height uint32) (verdict string, confidence float64, description string) {
 	totalPixels := int(width) * int(height)
@@ -77,57 +84,60 @@ func analyzeStickyKeysResponse(baseline, response []byte, width, height uint32) 
 		return "clean", 0, "no pixels to analyze"
 	}
 
-	// Count new dark pixels in response that weren't dark in baseline
-	newDarkPixels := 0
+	// Count pixels that changed significantly between baseline and response.
+	// This catches any terminal window regardless of color scheme:
+	// cmd.exe (black bg), PowerShell (blue bg), custom terminals, etc.
+	changedPixels := 0
 	for i := 0; i < totalPixels*4; i += 4 {
 		if i+2 >= len(response) || i+2 >= len(baseline) {
 			break
 		}
-		baselineBright := (int(baseline[i]) + int(baseline[i+1]) + int(baseline[i+2])) / 3
-		responseBright := (int(response[i]) + int(response[i+1]) + int(response[i+2])) / 3
-
-		if responseBright < darkThreshold && baselineBright >= darkThreshold {
-			newDarkPixels++
+		diff := pixelBrightness(baseline, i) - pixelBrightness(response, i)
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > changeThreshold {
+			changedPixels++
 		}
 	}
 
-	darkPercent := float64(newDarkPixels) / float64(totalPixels) * 100.0
+	changedPercent := float64(changedPixels) / float64(totalPixels) * 100.0
 
-	if darkPercent < minDarkRegionPercent {
-		return "clean", 0, fmt.Sprintf("%.1f%% new dark pixels (below %.1f%% threshold)", darkPercent, minDarkRegionPercent)
+	if changedPercent < minChangedPercent {
+		return "clean", 0, fmt.Sprintf("%.1f%% pixels changed (below %.1f%% threshold)", changedPercent, minChangedPercent)
 	}
 
-	if darkPercent > maxDarkRegionPercent {
-		return "clean", 0, fmt.Sprintf("%.1f%% new dark pixels (screen went dark, not a window)", darkPercent)
+	if changedPercent > maxChangedPercent {
+		return "clean", 0, fmt.Sprintf("%.1f%% pixels changed (full screen change, not a window)", changedPercent)
 	}
 
-	// Check if the dark region is rectangular (characteristic of cmd.exe window)
-	isRect, rectScore := detectDarkRectangle(response, width, height, baseline)
+	// Check if changed pixels form a rectangular region (characteristic of a terminal window)
+	isRect, rectScore := detectChangedRectangle(baseline, response, width, height)
 
-	if isRect && darkPercent > 5.0 {
-		confidence := math.Min(0.85, darkPercent/20.0+rectScore*0.5)
+	if isRect && changedPercent > 5.0 {
+		confidence := math.Min(0.85, changedPercent/20.0+rectScore*0.5)
 		return "backdoor_likely", confidence,
-			fmt.Sprintf("%.1f%% new dark pixels in rectangular region (rect score: %.2f)", darkPercent, rectScore)
+			fmt.Sprintf("%.1f%% pixels changed in rectangular region (rect score: %.2f)", changedPercent, rectScore)
 	}
 
-	if darkPercent > 3.0 {
+	if changedPercent > 3.0 {
 		return "vulnerable", 0.3,
-			fmt.Sprintf("%.1f%% new dark pixels (possibly sticky keys dialog)", darkPercent)
+			fmt.Sprintf("%.1f%% pixels changed (possibly sticky keys dialog)", changedPercent)
 	}
 
-	return "clean", 0.1, fmt.Sprintf("%.1f%% new dark pixels (minor change)", darkPercent)
+	return "clean", 0.1, fmt.Sprintf("%.1f%% pixels changed (minor change)", changedPercent)
 }
 
-// detectDarkRectangle checks if new dark pixels form a rectangular region.
-// Returns (isRectangular, score) where score is 0-1 indicating rectangularity.
-func detectDarkRectangle(response []byte, width, height uint32, baseline []byte) (isRectangular bool, score float64) {
+// detectChangedRectangle checks if significantly changed pixels form a rectangular region.
+// Returns (isRectangular, score) where score is 0-1 indicating rectangularity (fill ratio).
+func detectChangedRectangle(baseline, response []byte, width, height uint32) (isRectangular bool, score float64) {
 	w := int(width)
 	h := int(height)
 
-	// Find bounding box of new dark pixels
+	// Find bounding box of changed pixels
 	minX, minY := w, h
 	maxX, maxY := 0, 0
-	darkCount := 0
+	changedCount := 0
 
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
@@ -135,11 +145,12 @@ func detectDarkRectangle(response []byte, width, height uint32, baseline []byte)
 			if idx+2 >= len(response) || idx+2 >= len(baseline) {
 				continue
 			}
-			responseBright := (int(response[idx]) + int(response[idx+1]) + int(response[idx+2])) / 3
-			baselineBright := (int(baseline[idx]) + int(baseline[idx+1]) + int(baseline[idx+2])) / 3
-
-			if responseBright < darkThreshold && baselineBright >= darkThreshold {
-				darkCount++
+			diff := pixelBrightness(baseline, idx) - pixelBrightness(response, idx)
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff > changeThreshold {
+				changedCount++
 				if x < minX {
 					minX = x
 				}
@@ -156,17 +167,18 @@ func detectDarkRectangle(response []byte, width, height uint32, baseline []byte)
 		}
 	}
 
-	if darkCount == 0 || maxX <= minX || maxY <= minY {
+	if changedCount == 0 || maxX <= minX || maxY <= minY {
 		return false, 0
 	}
 
-	// Calculate what fraction of the bounding box is filled with dark pixels
+	// Calculate what fraction of the bounding box is filled with changed pixels.
+	// A terminal window has a solid background that fills its bounding box densely.
 	boundingArea := (maxX - minX + 1) * (maxY - minY + 1)
-	fillRatio := float64(darkCount) / float64(boundingArea)
+	fillRatio := float64(changedCount) / float64(boundingArea)
 
-	// A cmd.exe window should fill its bounding box at least 60%
-	isRect := fillRatio > 0.6 && boundingArea > (w*h/100) // At least 1% of screen
-	return isRect, fillRatio
+	// Threshold: >60% fill and at least 1% of total screen area
+	isRectangular = fillRatio > 0.6 && boundingArea > (w*h/100)
+	return isRectangular, fillRatio
 }
 
 // rgbaToPNG converts RGBA pixel data to a PNG byte buffer.

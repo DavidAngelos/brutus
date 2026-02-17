@@ -17,7 +17,9 @@ package rdp
 import (
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"time"
 )
@@ -139,15 +141,8 @@ func (p *Plugin) runConnectorForSession(ctx context.Context, inst *wasmInstance,
 					return 0, banner, fmt.Errorf("connection error: tcp write: %w", writeErr)
 				}
 			}
-			buf := make([]byte, tcpReadBufSize)
-			n, readErr := inst.activeConn().Read(buf)
-			if readErr != nil {
-				return 0, banner, fmt.Errorf("connection error: tcp read: %w", readErr)
-			}
-			inputPtr, inputLen, err = inst.writeToWasm(callCtx, buf[:n])
-			if err != nil {
-				return 0, banner, fmt.Errorf("write recv to wasm: %w", err)
-			}
+			// Don't read here — the connector will emit NEED_RECV when
+			// it actually needs server data.
 
 		case stateNeedRecv:
 			inst.freeInWasm(callCtx, outPtrSlot, 4)
@@ -253,6 +248,79 @@ func (p *Plugin) runSession(ctx context.Context, inst *wasmInstance, connHandle 
 	return baseline, response, width, height, nil
 }
 
+// readRDPFrame reads a single complete RDP PDU from the connection.
+// RDP uses two frame types:
+//   - TPKT (X.224): first byte = 0x03, 4-byte header, length in bytes 2-3 (big-endian u16)
+//   - FastPath:     first byte != 0x03, length in byte 1 (or bytes 1-2 if bit 7 of byte 1 is set)
+//
+// The returned slice contains the complete PDU including its header.
+func readRDPFrame(r io.Reader) ([]byte, error) {
+	// Read first 2 bytes: header byte + start of length
+	header := make([]byte, 2)
+	if _, err := io.ReadFull(r, header); err != nil {
+		return nil, err
+	}
+
+	if header[0] == 0x03 {
+		// TPKT: 4-byte header, total length in bytes 2-3
+		lenBytes := make([]byte, 2)
+		if _, err := io.ReadFull(r, lenBytes); err != nil {
+			return nil, fmt.Errorf("tpkt length read: %w", err)
+		}
+		frameLen := int(binary.BigEndian.Uint16(lenBytes))
+		if frameLen < 4 {
+			return nil, fmt.Errorf("invalid TPKT length: %d", frameLen)
+		}
+		frame := make([]byte, frameLen)
+		copy(frame[0:2], header)
+		copy(frame[2:4], lenBytes)
+		if frameLen > 4 {
+			if _, err := io.ReadFull(r, frame[4:]); err != nil {
+				return nil, fmt.Errorf("tpkt payload read: %w", err)
+			}
+		}
+		return frame, nil
+	}
+
+	// FastPath output
+	if header[1]&0x80 != 0 {
+		// 2-byte length: high 7 bits of byte 1 combined with byte 2
+		extraByte := make([]byte, 1)
+		if _, err := io.ReadFull(r, extraByte); err != nil {
+			return nil, fmt.Errorf("fastpath length2 read: %w", err)
+		}
+		frameLen := int(header[1]&0x7F)<<8 | int(extraByte[0])
+		if frameLen < 3 {
+			return nil, fmt.Errorf("invalid FastPath 2-byte length: %d", frameLen)
+		}
+		frame := make([]byte, frameLen)
+		frame[0] = header[0]
+		frame[1] = header[1]
+		frame[2] = extraByte[0]
+		if frameLen > 3 {
+			if _, err := io.ReadFull(r, frame[3:]); err != nil {
+				return nil, fmt.Errorf("fastpath payload read: %w", err)
+			}
+		}
+		return frame, nil
+	}
+
+	// 1-byte length
+	frameLen := int(header[1])
+	if frameLen < 2 {
+		return nil, fmt.Errorf("invalid FastPath 1-byte length: %d", frameLen)
+	}
+	frame := make([]byte, frameLen)
+	frame[0] = header[0]
+	frame[1] = header[1]
+	if frameLen > 2 {
+		if _, err := io.ReadFull(r, frame[2:]); err != nil {
+			return nil, fmt.Errorf("fastpath payload read: %w", err)
+		}
+	}
+	return frame, nil
+}
+
 // pumpSession drives the session state machine until a frame is available or timeout.
 func (p *Plugin) pumpSession(ctx context.Context, inst *wasmInstance, sessHandle uint32, timeout time.Duration) error {
 	callCtx := inst.callCtx(ctx)
@@ -262,27 +330,25 @@ func (p *Plugin) pumpSession(ctx context.Context, inst *wasmInstance, sessHandle
 	}
 
 	deadline := time.Now().Add(timeout)
+	conn := inst.activeConn()
 	// Reset read deadline when we exit so subsequent operations are not affected.
-	defer func() { _ = inst.activeConn().SetReadDeadline(time.Time{}) }()
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
 
 	for time.Now().Before(deadline) {
-		// Read data from server
-		buf := make([]byte, tcpReadBufSize)
-		_ = inst.activeConn().SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-		n, readErr := inst.activeConn().Read(buf)
+		// Set per-frame read deadline
+		_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+
+		// Read a complete RDP PDU (TPKT or FastPath framed)
+		frame, readErr := readRDPFrame(conn)
 		if readErr != nil {
 			if netErr, ok := readErr.(net.Error); ok && netErr.Timeout() {
 				continue // Timeout is OK, just loop
 			}
-			return fmt.Errorf("tcp read: %w", readErr)
+			return fmt.Errorf("read frame: %w", readErr)
 		}
 
-		if n == 0 {
-			continue
-		}
-
-		// Write to WASM
-		inputPtr, inputLen, err := inst.writeToWasm(callCtx, buf[:n])
+		// Write complete frame to WASM
+		inputPtr, inputLen, err := inst.writeToWasm(callCtx, frame)
 		if err != nil {
 			return fmt.Errorf("write to wasm: %w", err)
 		}
@@ -319,14 +385,16 @@ func (p *Plugin) pumpSession(ctx context.Context, inst *wasmInstance, sessHandle
 		case stateFrameAvailable:
 			inst.freeInWasm(callCtx, outPtrSlot, 4)
 			inst.freeInWasm(callCtx, outLenSlot, 4)
-			return nil // Frame ready
+			// Don't return — RDP sends the screen incrementally across many
+			// frames.  Keep pumping until timeout to accumulate all bitmap
+			// updates into the DecodedImage framebuffer.
 
 		case stateSessionNeedSend:
 			sendData := readOutputFromSlots(callCtx, inst, outPtrSlot, outLenSlot)
 			inst.freeInWasm(callCtx, outPtrSlot, 4)
 			inst.freeInWasm(callCtx, outLenSlot, 4)
 			if len(sendData) > 0 {
-				if _, writeErr := inst.activeConn().Write(sendData); writeErr != nil {
+				if _, writeErr := conn.Write(sendData); writeErr != nil {
 					return fmt.Errorf("tcp write: %w", writeErr)
 				}
 			}

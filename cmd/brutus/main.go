@@ -115,6 +115,8 @@ func main() {
 	useHTTPS := flag.Bool("https", false, "Use HTTPS for browser connections")
 	aiMode := flag.Bool("experimental-ai", false, "Enable AI-powered credential detection for HTTP services (experimental)")
 	aiVerify := flag.Bool("experimental-ai-verify", false, "Use Claude Vision to verify login success (more accurate but slower)")
+	noVision := flag.Bool("no-vision", false, "Disable Vision API for sticky keys detection (heuristic-only mode)")
+	noStickyKeys := flag.Bool("no-sticky-keys", false, "Disable sticky keys backdoor detection for RDP targets")
 
 	flag.Parse()
 
@@ -210,6 +212,8 @@ func main() {
 		sprayMode:        *sprayMode,
 		anthropicKey:     anthropicKey,
 		perplexityKey:    perplexityKey,
+		noVision:         *noVision,
+		noStickyKeys:     *noStickyKeys,
 	}
 
 	var allResults []brutus.Result

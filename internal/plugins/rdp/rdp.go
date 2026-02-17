@@ -145,17 +145,16 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	banner, err := p.runConnector(ctx, inst, configBytes)
 	if err != nil {
 		result.Error = classifyError(err)
-		result.Duration = time.Since(start)
 		result.Banner = banner
-		return result
+	} else {
+		// Connection succeeded — authentication was valid
+		result.Success = true
+		result.Banner = banner
 	}
 
-	// Connection succeeded — authentication was valid
-	result.Success = true
-	result.Banner = banner
-
-	// Sticky keys detection: optionally run on a separate connection
-	if shouldRunStickyKeysCheck() {
+	// Sticky keys detection: runs on a separate non-NLA connection regardless of
+	// auth result, since it's a pre-auth check that doesn't require credentials.
+	if shouldRunStickyKeysCheck(ctx) {
 		stickyResult := p.runStickyKeysCheck(ctx, target, timeout)
 		if stickyResult != nil {
 			result.Banner = formatStickyKeysBanner(result.Banner, stickyResult)
@@ -289,19 +288,9 @@ func (p *Plugin) runConnector(ctx context.Context, inst *wasmInstance, config []
 					return banner, fmt.Errorf("connection error: tcp write: %w", writeErr)
 				}
 			}
-
-			// After sending, always read the server response immediately.
-			// Both the Connector and CredSSP phases expect input on the next
-			// step call — passing empty input causes decode errors.
-			buf := make([]byte, tcpReadBufSize)
-			n, readErr := inst.activeConn().Read(buf)
-			if readErr != nil {
-				return banner, fmt.Errorf("connection error: tcp read: %w", readErr)
-			}
-			inputPtr, inputLen, err = inst.writeToWasm(callCtx, buf[:n])
-			if err != nil {
-				return banner, fmt.Errorf("write recv to wasm: %w", err)
-			}
+			// Don't read here — the connector will emit NEED_RECV when
+			// it actually needs server data. One-way messages (e.g., MCS
+			// Erect Domain Request) don't get responses.
 
 		case stateNeedRecv:
 			inst.freeInWasm(callCtx, outPtrSlot, 4)
@@ -392,11 +381,10 @@ func classifyError(err error) error {
 }
 
 // shouldRunStickyKeysCheck returns true if sticky keys detection is enabled.
-// This activates when ANTHROPIC_API_KEY is set, which is also required by
-// the --experimental-ai CLI flag. The heuristic detection runs regardless;
-// Vision API confirmation only fires when the key is present.
-func shouldRunStickyKeysCheck() bool {
-	return os.Getenv("ANTHROPIC_API_KEY") != ""
+// The heuristic analysis (pixel comparison) always runs since it has no
+// external dependencies. Use --no-sticky-keys to disable entirely.
+func shouldRunStickyKeysCheck(ctx context.Context) bool {
+	return !brutus.NoStickyKeysFromContext(ctx)
 }
 
 // runStickyKeysCheck performs sticky keys detection on a separate connection.
@@ -406,37 +394,25 @@ func (p *Plugin) runStickyKeysCheck(ctx context.Context, target string, timeout 
 
 	eng, err := initEngine()
 	if err != nil {
-		return &StickyKeysResult{
-			Performed:  false,
-			SkipReason: fmt.Sprintf("wasm init: %v", err),
-		}
+		return &StickyKeysResult{Performed: false, SkipReason: fmt.Sprintf("wasm init: %v", err)}
 	}
 
 	dialer := &net.Dialer{Timeout: timeout}
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return &StickyKeysResult{
-			Performed:  false,
-			SkipReason: fmt.Sprintf("connection failed: %v", err),
-		}
+		return &StickyKeysResult{Performed: false, SkipReason: fmt.Sprintf("connection failed: %v", err)}
 	}
 	defer conn.Close()
 
 	inst, err := newInstance(ctx, eng, conn)
 	if err != nil {
-		return &StickyKeysResult{
-			Performed:  false,
-			SkipReason: fmt.Sprintf("wasm instance: %v", err),
-		}
+		return &StickyKeysResult{Performed: false, SkipReason: fmt.Sprintf("wasm instance: %v", err)}
 	}
 	defer inst.close(ctx)
 
 	stickyResult, err := p.runStickyKeysDetection(ctx, inst, addr)
 	if err != nil {
-		return &StickyKeysResult{
-			Performed:  false,
-			SkipReason: fmt.Sprintf("detection failed: %v", err),
-		}
+		return &StickyKeysResult{Performed: false, SkipReason: fmt.Sprintf("detection failed: %v", err)}
 	}
 
 	return stickyResult
@@ -479,7 +455,12 @@ func (p *Plugin) runStickyKeysDetection(ctx context.Context, inst *wasmInstance,
 		return result, nil
 	}
 
-	visionAPIKey := os.Getenv("ANTHROPIC_API_KEY")
+	// Vision API confirmation is optional: requires ANTHROPIC_API_KEY and
+	// can be disabled with --no-vision flag.
+	var visionAPIKey string
+	if !brutus.NoVisionFromContext(ctx) {
+		visionAPIKey = os.Getenv("ANTHROPIC_API_KEY")
+	}
 	*result = runStickyKeysAnalysis(ctx, baseline, response, width, height, visionAPIKey)
 	result.Performed = true
 
@@ -488,8 +469,18 @@ func (p *Plugin) runStickyKeysDetection(ctx context.Context, inst *wasmInstance,
 
 // formatStickyKeysBanner appends sticky keys detection results to the banner.
 func formatStickyKeysBanner(existingBanner string, result *StickyKeysResult) string {
-	if result == nil || !result.Performed {
+	if result == nil {
 		return existingBanner
+	}
+	if !result.Performed {
+		banner := existingBanner
+		if banner != "" {
+			banner += "\n"
+		}
+		if result.SkipReason != "" {
+			banner += "[INFO] Sticky keys check skipped: " + result.SkipReason
+		}
+		return banner
 	}
 
 	banner := existingBanner

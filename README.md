@@ -27,7 +27,7 @@ Built in Go as a single binary with zero external dependencies, Brutus integrate
 
 **Key features:**
 - **Zero dependencies:** Single binary, cross-platform (Linux, Windows, macOS)
-- **23 protocols:** SSH, MySQL, PostgreSQL, MSSQL, Redis, SMB, LDAP, WinRM, SNMP, HTTP Basic Auth, and more
+- **24 protocols:** SSH, RDP, MySQL, PostgreSQL, MSSQL, Redis, SMB, LDAP, WinRM, SNMP, HTTP Basic Auth, and more
 - **Pipeline integration:** Native support for fingerprintx and naabu workflows
 - **Embedded bad keys:** Built-in collection of known SSH keys (Vagrant, F5, ExaGrid, etc.)
 - **Go library:** Import directly into your security automation tools
@@ -307,7 +307,7 @@ Brutus outputs only successful credentials in JSONL format (one JSON object per 
 
 ## Supported Protocols
 
-Brutus supports **23 protocols**:
+Brutus supports **24 protocols**:
 
 ### Network Services
 | Protocol | Port | Auth Methods | Use Case |
@@ -316,6 +316,7 @@ Brutus supports **23 protocols**:
 | FTP | 21 | Password | File servers, NAS devices |
 | Telnet | 23 | Password | Legacy systems, IoT devices |
 | VNC | 5900 | Password | Remote desktops |
+| RDP | 3389 | NLA/CredSSP, Password | Windows servers, workstations |
 | SNMP | 161 | Community String | Network devices, printers |
 
 ### Web Services
@@ -478,30 +479,41 @@ naabu -host 192.168.1.0/24 -p 80,443,8080 -silent | \
 
 ## Known Limitations
 
-### RDP Protocol Not Supported
+### RDP: Sticky Keys Backdoor Detection
 
-**TL;DR:** We implemented RDP support, tested it, and removed it. Here's the full story.
+Brutus includes automatic detection of the **sticky keys backdoor** (MITRE ATT&CK [T1546.008](https://attack.mitre.org/techniques/T1546/008/)) on RDP targets. This pre-authentication check runs on every RDP target automatically — no credentials required.
 
-We originally implemented RDP authentication testing using a Rust FFI library ([rdp-rs](https://github.com/citronneur/rdp-rs)) wrapped via CGO. This approach worked in development but introduced several problems:
+**How it works:**
 
-**Build Complexity:**
-- Required Rust toolchain alongside Go
-- CGO cross-compilation was fragile (Windows MSVC vs MinGW incompatibility)
-- GitHub Actions macOS Intel runners frequently got cancelled
-- Static linking the Rust library added significant build time
+1. Connects to the RDP target and negotiates a non-NLA session
+2. Captures the login screen bitmap as a baseline
+3. Sends 5x Shift key (the sticky keys trigger)
+4. Captures the response bitmap
+5. Heuristic analysis detects if a terminal window appeared (cmd.exe, PowerShell, etc.)
+6. Optionally confirms via Claude Vision API (when `ANTHROPIC_API_KEY` is set)
 
-**Runtime Issues:**
-- TLS/NLA negotiation failures against standard Windows Server RDP (GCP default images)
-- Intermittent SSL errors: `tlsv1 alert internal error` / `errSSLInternal (-9838)`
-- The underlying `rdp-rs` library has limited CredSSP/NLA support
+```bash
+# Standard RDP credential testing (sticky keys checked automatically)
+brutus --target 10.0.0.50:3389 --protocol rdp -u administrator -p Password1
 
-**Decision:** Rather than ship a broken protocol, we removed RDP entirely. This keeps Brutus as a true zero-dependency, single-binary tool that "just works" across all platforms.
+# Heuristic-only mode (no Vision API)
+brutus --target 10.0.0.50:3389 --protocol rdp --no-vision
 
-**Want to help?** A pure Go RDP implementation would be the ideal solution. The protocol is well-documented:
-- [MS-RDPBCGR](https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr) - Basic Connectivity and Graphics Remoting
-- [MS-CSSP](https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-cssp) - Credential Security Support Provider (NLA)
+# Disable sticky keys detection entirely
+brutus --target 10.0.0.50:3389 --protocol rdp --no-sticky-keys
+```
 
-This could be an interesting experiment for autonomous AI agents—given test RDP servers, the spec converted to markdown, and Rust-to-Go translation patterns, an agent harness could potentially iterate toward a working pure Go implementation.
+**Detection output:**
+
+```
+[CRITICAL] Sticky keys backdoor CONFIRMED (confidence: 85%)
+sethc.exe has been replaced with cmd.exe or similar.
+SYSTEM-level unauthenticated access available via 5x Shift.
+```
+
+**B-TP (Benign True Positive) considerations:** The backdoor replacement may also indicate forgotten password recovery procedures or artifacts from authorized penetration tests.
+
+**Technical implementation:** RDP protocol support uses [IronRDP](https://github.com/Devolutions/IronRDP) (Rust) compiled to WebAssembly and executed via [wazero](https://github.com/tetragonalworks/wazero), maintaining Brutus's zero-CGO, single-binary design.
 
 ### Browser Plugin
 

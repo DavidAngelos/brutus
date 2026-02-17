@@ -43,6 +43,10 @@ SSH Options:
   --badkeys              Test embedded bad SSH keys (rapid7/ssh-badkeys, vagrant) [default: true]
   --no-badkeys           Disable embedded bad key testing
 
+RDP Options:
+  --no-sticky-keys       Disable sticky keys backdoor detection for RDP targets
+  --no-vision            Disable Vision API confirmation (heuristic-only sticky keys detection)
+
 Performance Options:
   -t <threads>           Number of concurrent threads (default: 10)
   --timeout <duration>   Per-credential timeout (default: 10s)
@@ -106,7 +110,7 @@ Fingerprintx Integration:
   eliminating the need to specify -protocol manually.
 
 Supported Protocols:
-  Network:      ssh, ftp, telnet, vnc
+  Network:      ssh, rdp, ftp, telnet, vnc
   Enterprise:   smb, ldap, winrm
   Databases:    mysql, postgresql, mssql, mongodb, redis, neo4j, cassandra,
                 couchdb, elasticsearch, influxdb
@@ -151,6 +155,12 @@ Examples:
 
   # AI mode in pipeline - auto-login to any HTTP service with default device credentials
   naabu -host 192.168.1.0/24 -p 80,443,8080 -silent | fingerprintx --json | brutus --experimental-ai
+
+  # RDP credential testing (sticky keys detection runs automatically)
+  brutus --target 10.0.0.50:3389 --protocol rdp -u administrator -p "Password1"
+
+  # RDP with heuristic-only sticky keys detection (no Vision API)
+  brutus --target 10.0.0.50:3389 --protocol rdp --no-vision
 
 `)
 }

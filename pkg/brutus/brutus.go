@@ -91,6 +91,31 @@ func TLSModeFromContext(ctx context.Context) string {
 	return "disable"
 }
 
+const noVisionContextKey contextKey = "noVision"
+const noStickyKeysContextKey contextKey = "noStickyKeys"
+
+// ContextWithNoVision disables Vision API for sticky keys detection.
+func ContextWithNoVision(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noVisionContextKey, true)
+}
+
+// NoVisionFromContext returns true if Vision API is disabled.
+func NoVisionFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(noVisionContextKey).(bool)
+	return v
+}
+
+// ContextWithNoStickyKeys disables sticky keys backdoor detection.
+func ContextWithNoStickyKeys(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noStickyKeysContextKey, true)
+}
+
+// NoStickyKeysFromContext returns true if sticky keys detection is disabled.
+func NoStickyKeysFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(noStickyKeysContextKey).(bool)
+	return v
+}
+
 // Credential represents a pre-paired username with password or key.
 // Use this instead of separate Usernames/Passwords/Keys arrays when you have
 // specific credential pairs (e.g., badkeys where each key has an associated username).

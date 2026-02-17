@@ -133,7 +133,7 @@ impl ConnectorHandle {
             platform: ironrdp_pdu::rdp::capability_sets::MajorPlatformType::UNSPECIFIED,
             hardware_id: None,
             request_data: None,
-            autologon: true,
+            autologon: !config.skip_auth,
             enable_audio_playback: false,
             performance_flags: ironrdp_pdu::rdp::client_info::PerformanceFlags::default(),
             license_cache: None,
@@ -271,7 +271,10 @@ impl ConnectorHandle {
             // Check if we produced output to send
             let out_bytes = output.filled().to_vec();
             if !out_bytes.is_empty() {
-                self.needs_input = true; // After sending, we expect a response
+                // Only expect server data if the connector has a PDU hint
+                // (meaning it's waiting for a specific response). One-way messages
+                // like MCS Erect Domain Request don't get responses.
+                self.needs_input = self.connector.next_pdu_hint().is_some();
                 return Ok((STATE_NEED_SEND, out_bytes));
             }
 
