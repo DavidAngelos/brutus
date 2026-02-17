@@ -493,14 +493,14 @@ Brutus includes automatic detection of the **sticky keys backdoor** (MITRE ATT&C
 6. Optionally confirms via Claude Vision API (when `ANTHROPIC_API_KEY` is set)
 
 ```bash
-# Standard RDP credential testing (sticky keys checked automatically)
+# RDP credential testing (sticky keys detection off by default)
 brutus --target 10.0.0.50:3389 --protocol rdp -u administrator -p Password1
 
-# Heuristic-only mode (no Vision API)
-brutus --target 10.0.0.50:3389 --protocol rdp --no-vision
+# Enable sticky keys backdoor detection (heuristic only)
+brutus --target 10.0.0.50:3389 --protocol rdp --sticky-keys
 
-# Disable sticky keys detection entirely
-brutus --target 10.0.0.50:3389 --protocol rdp --no-sticky-keys
+# Sticky keys with Vision API confirmation
+brutus --target 10.0.0.50:3389 --protocol rdp --sticky-keys --experimental-ai
 ```
 
 **Detection output:**

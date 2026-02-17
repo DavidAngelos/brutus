@@ -48,8 +48,7 @@ type baseConfigOptions struct {
 	sprayMode         bool
 	anthropicKey      string              // ANTHROPIC_API_KEY (read once in main)
 	perplexityKey     string              // PERPLEXITY_API_KEY (read once in main)
-	noVision          bool                // Disable Vision API for sticky keys detection
-	noStickyKeys      bool                // Disable sticky keys detection entirely
+	stickyKeys        bool                // Enable sticky keys detection for RDP
 }
 
 // determineTLSMode returns the appropriate TLS mode based on the verify-tls flag

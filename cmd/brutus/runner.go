@@ -153,10 +153,11 @@ func runSingleTarget(target, protocol, tlsMode string, base *baseConfigOptions, 
 	defer stop()
 
 	// Propagate RDP sticky keys flags via context (not env vars)
-	if base.noVision {
+	// Vision API requires --experimental-ai; disable it otherwise
+	if !base.aiMode {
 		ctx = brutus.ContextWithNoVision(ctx)
 	}
-	if base.noStickyKeys {
+	if !base.stickyKeys {
 		ctx = brutus.ContextWithNoStickyKeys(ctx)
 	}
 

@@ -44,8 +44,7 @@ SSH Options:
   --no-badkeys           Disable embedded bad key testing
 
 RDP Options:
-  --no-sticky-keys       Disable sticky keys backdoor detection for RDP targets
-  --no-vision            Disable Vision API confirmation (heuristic-only sticky keys detection)
+  --sticky-keys          Enable sticky keys backdoor detection for RDP targets
 
 Performance Options:
   -t <threads>           Number of concurrent threads (default: 10)
@@ -156,11 +155,10 @@ Examples:
   # AI mode in pipeline - auto-login to any HTTP service with default device credentials
   naabu -host 192.168.1.0/24 -p 80,443,8080 -silent | fingerprintx --json | brutus --experimental-ai
 
-  # RDP credential testing (sticky keys detection runs automatically)
-  brutus --target 10.0.0.50:3389 --protocol rdp -u administrator -p "Password1"
+  # RDP credential testing with sticky keys backdoor detection (heuristic only)
+  brutus --target 10.0.0.50:3389 --protocol rdp --sticky-keys -u administrator -p "Password1"
 
-  # RDP with heuristic-only sticky keys detection (no Vision API)
-  brutus --target 10.0.0.50:3389 --protocol rdp --no-vision
-
+  # RDP with Vision API confirmation (requires --experimental-ai + ANTHROPIC_API_KEY)
+  brutus --target 10.0.0.50:3389 --protocol rdp --sticky-keys --experimental-ai
 `)
 }
