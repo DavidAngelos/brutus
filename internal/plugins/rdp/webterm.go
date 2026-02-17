@@ -27,8 +27,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
-	"runtime"
 	"sync"
 	"time"
 
@@ -48,20 +46,6 @@ type wsMessage struct {
 	Y         uint16 `json:"y,omitempty"`         // mouse Y coordinate
 	Button    uint8  `json:"button,omitempty"`    // mouse button: 0=left, 1=middle, 2=right (JS convention)
 	EventType string `json:"eventType,omitempty"` // "move", "down", "up" (mouse)
-}
-
-// openBrowser opens a URL in the user's default browser.
-func openBrowser(url string) {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", url)
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
-	default: // linux, freebsd, etc.
-		cmd = exec.Command("xdg-open", url)
-	}
-	_ = cmd.Start()
 }
 
 // RunWebTerminal connects to an RDP target via sticky keys and serves an
@@ -157,9 +141,6 @@ func RunWebTerminal(ctx context.Context, target string, timeout time.Duration) e
 	fmt.Fprintf(os.Stderr, "  ║  Press Ctrl+C to stop                           ║\n")
 	fmt.Fprintf(os.Stderr, "  ╚══════════════════════════════════════════════════╝\n")
 	fmt.Fprintf(os.Stderr, "\n")
-
-	// Auto-open in default browser
-	openBrowser(url)
 
 	return server.Serve(listener)
 }
