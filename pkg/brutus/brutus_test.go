@@ -143,7 +143,7 @@ func TestBruteWithContext_CancelDuringExecution(t *testing.T) {
 
 	// Create a config that would take a long time to complete
 	config := &Config{
-		Target:    "127.0.0.1:1",  // Non-existent port
+		Target:    "127.0.0.1:1", // Non-existent port
 		Protocol:  "ssh",
 		Usernames: []string{"user1", "user2", "user3", "user4", "user5"},
 		Passwords: []string{"pass1", "pass2", "pass3", "pass4", "pass5"},

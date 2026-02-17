@@ -45,6 +45,8 @@ SSH Options:
 
 RDP Options:
   --sticky-keys          Enable sticky keys backdoor detection for RDP targets
+  --sticky-keys-exec <cmd>  Execute a command via sticky keys backdoor (demo/pentest)
+  --sticky-keys-web      Start interactive web terminal via sticky keys backdoor
 
 Performance Options:
   -t <threads>           Number of concurrent threads (default: 10)
@@ -160,5 +162,11 @@ Examples:
 
   # RDP with Vision API confirmation (requires --experimental-ai + ANTHROPIC_API_KEY)
   brutus --target 10.0.0.50:3389 --protocol rdp --sticky-keys --experimental-ai
+
+  # Execute a command via sticky keys backdoor
+  brutus --target 10.0.0.50:3389 --protocol rdp --sticky-keys --sticky-keys-exec "whoami"
+
+  # Interactive web terminal via sticky keys backdoor (opens browser-based RDP viewer)
+  brutus --target 10.0.0.50:3389 --protocol rdp --sticky-keys --sticky-keys-web
 `)
 }

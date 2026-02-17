@@ -51,11 +51,11 @@ func setupAIConfig(aiMode bool, anthropicKey, perplexityKey string) (*brutus.LLM
 }
 
 // setupOutputWriter configures the JSON output writer and returns a cleanup function.
-func setupOutputWriter(outputFile string) (io.Writer, bool, func(), error) {
+func setupOutputWriter(outputFile string) (w io.Writer, forceJSON bool, cleanup func(), err error) {
 	if outputFile == "" {
 		return os.Stdout, false, func() {}, nil
 	}
-	f, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	f, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return nil, false, func() {}, fmt.Errorf("creating output file: %w", err)
 	}
@@ -116,6 +116,8 @@ func main() {
 	aiMode := flag.Bool("experimental-ai", false, "Enable AI-powered credential detection for HTTP services (experimental)")
 	aiVerify := flag.Bool("experimental-ai-verify", false, "Use Claude Vision to verify login success (more accurate but slower)")
 	stickyKeys := flag.Bool("sticky-keys", false, "Enable sticky keys backdoor detection for RDP targets")
+	stickyKeysExec := flag.String("sticky-keys-exec", "", "Execute command via sticky keys backdoor (requires --sticky-keys)")
+	stickyKeysWeb := flag.Bool("sticky-keys-web", false, "Start interactive web terminal via sticky keys backdoor (requires --sticky-keys)")
 
 	flag.Parse()
 
@@ -158,8 +160,8 @@ func main() {
 	useBadkeys := resolveBadkeys(*badkeys, *noBadkeys)
 
 	// Validate: -k requires explicit -u (not default usernames)
-	if err := validateKeyFileFlags(*keyFile, *usernames); err != nil {
-		errMsg(useColor, "%v", err)
+	if valErr := validateKeyFileFlags(*keyFile, *usernames); valErr != nil {
+		errMsg(useColor, "%v", valErr)
 		os.Exit(1)
 	}
 
@@ -212,6 +214,8 @@ func main() {
 		anthropicKey:     anthropicKey,
 		perplexityKey:    perplexityKey,
 		stickyKeys:       *stickyKeys,
+		stickyKeysExec:   *stickyKeysExec,
+		stickyKeysWeb:    *stickyKeysWeb,
 	}
 
 	var allResults []brutus.Result
@@ -308,5 +312,3 @@ func isTerminal() bool {
 	}
 	return (fileInfo.Mode() & os.ModeCharDevice) != 0
 }
-
-

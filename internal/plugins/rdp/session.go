@@ -49,7 +49,7 @@ const leftShiftScancode = 0x2A
 
 // runConnectorForSession drives the connector state machine and returns the connector handle
 // (for session handoff) instead of consuming it. Similar to runConnector but doesn't free the handle.
-func (p *Plugin) runConnectorForSession(ctx context.Context, inst *wasmInstance, config []byte) (handle uint32, banner string, err error) {
+func (p *Plugin) runConnectorForSession(ctx context.Context, inst *wasmInstance, config []byte) (handle uint32, banner string, err error) { //nolint:unparam // banner reserved for future use
 	configPtr, configLen, err := inst.writeToWasm(ctx, config)
 	if err != nil {
 		return 0, "", fmt.Errorf("write config: %w", err)

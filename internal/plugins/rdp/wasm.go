@@ -178,7 +178,7 @@ func (w *wasmInstance) callCtx(ctx context.Context) context.Context {
 
 // writeToWasm allocates memory in WASM and writes data into it.
 // Returns (ptr, len) for passing to WASM functions.
-func (w *wasmInstance) writeToWasm(ctx context.Context, data []byte) (uint32, uint32, error) {
+func (w *wasmInstance) writeToWasm(ctx context.Context, data []byte) (ptr, length uint32, err error) {
 	allocFn := w.mod.ExportedFunction("wasm_alloc")
 	if allocFn == nil {
 		return 0, 0, fmt.Errorf("wasm_alloc not exported")
@@ -188,7 +188,7 @@ func (w *wasmInstance) writeToWasm(ctx context.Context, data []byte) (uint32, ui
 	if err != nil {
 		return 0, 0, fmt.Errorf("wasm_alloc(%d): %w", len(data), err)
 	}
-	ptr := uint32(results[0])
+	ptr = uint32(results[0])
 	if ptr == 0 {
 		return 0, 0, fmt.Errorf("wasm_alloc returned null")
 	}

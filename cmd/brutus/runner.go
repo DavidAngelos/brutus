@@ -19,11 +19,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 
+	"github.com/praetorian-inc/brutus/internal/plugins/rdp"
 	"github.com/praetorian-inc/brutus/internal/plugins/snmp"
 	"github.com/praetorian-inc/brutus/pkg/brutus"
 )
@@ -133,6 +135,11 @@ func runSingleTarget(target, protocol, tlsMode string, base *baseConfigOptions, 
 		}
 	}
 
+	// Sticky keys interactive modes: bypass brute force entirely
+	if protocol == "rdp" && base.stickyKeys && (base.stickyKeysExec != "" || base.stickyKeysWeb) {
+		return runStickyKeysInteractive(target, protocol, base)
+	}
+
 	// Verbose: print config summary before starting
 	logVerbose(base.verbose, "Target: %s (protocol: %s)", target, protocol)
 	logVerbose(base.verbose, "Paired credentials: %d, Usernames: %d, Passwords: %d, Keys: %d",
@@ -238,4 +245,44 @@ func configureBrowser(config *brutus.Config, target string, base *baseConfigOpti
 		return fmt.Errorf("browser mode: no credentials discovered and no browser plugin configured for %s", target)
 	}
 	return nil
+}
+
+// runStickyKeysInteractive handles the --sticky-keys-exec and --sticky-keys-web modes.
+// These bypass normal brute force and instead exploit the sticky keys backdoor interactively.
+func runStickyKeysInteractive(target, protocol string, base *baseConfigOptions) ([]brutus.Result, bool) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	result := brutus.Result{
+		Protocol: protocol,
+		Target:   target,
+		Username: "(sticky-keys)",
+	}
+
+	if base.stickyKeysWeb {
+		err := rdp.RunWebTerminal(ctx, target, base.timeout)
+		if err != nil && err != http.ErrServerClosed {
+			errMsg(base.useColor, "web terminal: %v", err)
+			result.Error = err
+			return []brutus.Result{result}, false
+		}
+		result.Success = true
+		result.Banner = "[INFO] Web terminal session ended"
+		return []brutus.Result{result}, true
+	}
+
+	if base.stickyKeysExec != "" {
+		execResult := rdp.RunStickyKeysExec(ctx, target, base.stickyKeysExec, base.timeout)
+		if execResult.Error != "" {
+			errMsg(base.useColor, "sticky keys exec: %s", execResult.Error)
+			result.Error = fmt.Errorf("%s", execResult.Error)
+			return []brutus.Result{result}, false
+		}
+		result.Success = execResult.BackdoorDetected
+		result.Banner = fmt.Sprintf("[INFO] Sticky keys exec: backdoor=%v, screenshot=%s",
+			execResult.BackdoorDetected, execResult.ScreenshotPath)
+		return []brutus.Result{result}, execResult.BackdoorDetected
+	}
+
+	return nil, false
 }

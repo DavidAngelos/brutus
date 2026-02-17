@@ -22,33 +22,35 @@ import (
 
 // baseConfigOptions holds common configuration shared across targets
 type baseConfigOptions struct {
-	usernames         []string
-	passwords         []string
-	keys              [][]byte
-	threads           int
-	timeout           time.Duration
-	stopOnSuccess     bool
-	snmpTier          string
-	llmConfig         *brutus.LLMConfig
-	browserTimeout    time.Duration
-	browserTabs       int
-	browserVisible    bool
-	useHTTPS          bool
-	useColor          bool
-	quiet             bool
-	verbose           bool
+	usernames        []string
+	passwords        []string
+	keys             [][]byte
+	threads          int
+	timeout          time.Duration
+	stopOnSuccess    bool
+	snmpTier         string
+	llmConfig        *brutus.LLMConfig
+	browserTimeout   time.Duration
+	browserTabs      int
+	browserVisible   bool
+	useHTTPS         bool
+	useColor         bool
+	quiet            bool
+	verbose          bool
 	useBadkeys       bool
 	protocolOverride string        // Override fingerprintx-detected protocol
 	aiMode           bool          // Enable AI-powered credential detection for HTTP
 	aiVerify         bool          // Use Claude Vision to verify login success
 	tlsMode          string        // TLS verification mode: "disable", "verify", "skip-verify"
-	rateLimit         float64             // Max requests per second (0 = unlimited)
-	jitter            time.Duration       // Random delay variance for rate limiting
-	maxAttempts       int
-	sprayMode         bool
-	anthropicKey      string              // ANTHROPIC_API_KEY (read once in main)
-	perplexityKey     string              // PERPLEXITY_API_KEY (read once in main)
-	stickyKeys        bool                // Enable sticky keys detection for RDP
+	rateLimit        float64       // Max requests per second (0 = unlimited)
+	jitter           time.Duration // Random delay variance for rate limiting
+	maxAttempts      int
+	sprayMode        bool
+	anthropicKey     string // ANTHROPIC_API_KEY (read once in main)
+	perplexityKey    string // PERPLEXITY_API_KEY (read once in main)
+	stickyKeys       bool   // Enable sticky keys detection for RDP
+	stickyKeysExec   string // Command to execute via sticky keys backdoor
+	stickyKeysWeb    bool   // Start web terminal for sticky keys interaction
 }
 
 // determineTLSMode returns the appropriate TLS mode based on the verify-tls flag

@@ -241,7 +241,7 @@ func TestAnalyzeCredentials_SanitizesBannerOnJSONParseFailure(t *testing.T) {
 	}
 
 	// Verify that the captured prompt does NOT contain dangerous characters
-	if len(capturedPrompt) == 0 {
+	if capturedPrompt == "" {
 		t.Fatal("No prompt captured from API request")
 	}
 
@@ -281,6 +281,6 @@ func containsTripleQuotes(s string) bool {
 }
 
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && (s[:len(substr)] == substr || contains(s[1:], substr))))
+	return len(s) >= len(substr) && (s == substr || substr == "" ||
+		(s != "" && (s[:len(substr)] == substr || contains(s[1:], substr))))
 }

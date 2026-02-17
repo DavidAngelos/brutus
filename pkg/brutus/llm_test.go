@@ -59,7 +59,7 @@ func TestSanitizeBanner(t *testing.T) {
 		{
 			name:     "combines all sanitization rules",
 			input:    "\x00\x1b[31m" + strings.Repeat("x", 300) + `"""injection` + strings.Repeat("y", 300),
-			expected: strings.Repeat("x", 300) + "injection" + strings.Repeat("y", 191), // 300 + "injection"(9) + 191 = 500
+			expected: strings.Repeat("x", 300) + "injection" + strings.Repeat("y", 191), // total: 300 + 9 + 191 chars
 		},
 	}
 

@@ -257,6 +257,45 @@ pub extern "C" fn session_send_key(
     state
 }
 
+/// Send a mouse event through the session.
+///
+/// x, y: absolute coordinates (u16 encoded as u32)
+/// button: 0=none (move only), 1=left, 2=right, 3=middle
+/// event_type: 0=move, 1=button press, 2=button release
+/// Returns state code. Response bytes written to output slots.
+#[no_mangle]
+pub extern "C" fn session_send_mouse(
+    handle: u32,
+    x: u32,
+    y: u32,
+    button: u32,
+    event_type: u32,
+    output_ptr_out: u32,
+    output_len_out: u32,
+) -> u32 {
+    let (state, output) = with_handles(|t| match t.get_session_mut(handle) {
+        Some(sess) => sess.send_mouse(x as u16, y as u16, button, event_type),
+        None => (session::STATE_SESSION_ERROR, Vec::new()),
+    });
+
+    if !output.is_empty() {
+        let out_ptr = wasm_alloc(output.len() as u32);
+        if out_ptr != 0 {
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    output.as_ptr(),
+                    out_ptr as *mut u8,
+                    output.len(),
+                );
+                std::ptr::write(output_ptr_out as *mut u32, out_ptr);
+                std::ptr::write(output_len_out as *mut u32, output.len() as u32);
+            }
+        }
+    }
+
+    state
+}
+
 /// Get the current session framebuffer as RGBA pixel data.
 ///
 /// Writes the frame data pointer and length to output_ptr_out/output_len_out.

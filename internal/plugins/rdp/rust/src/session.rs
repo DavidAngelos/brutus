@@ -6,7 +6,7 @@
 
 use ironrdp_connector::ConnectionResult;
 use ironrdp_graphics::image_processing::PixelFormat;
-use ironrdp_input::{Database as InputDatabase, Operation, Scancode};
+use ironrdp_input::{Database as InputDatabase, MouseButton, MousePosition, Operation, Scancode};
 use ironrdp_pdu::Action;
 use ironrdp_session::image::DecodedImage;
 use ironrdp_session::{ActiveStage, ActiveStageOutput};
@@ -150,6 +150,56 @@ impl SessionHandle {
             Err(e) => (
                 STATE_SESSION_ERROR,
                 format!("input error: {}", e).into_bytes(),
+            ),
+        }
+    }
+
+    /// Send a mouse event. Returns (state_code, output_bytes_to_send).
+    ///
+    /// button: 0=none (move only), 1=left, 2=right, 3=middle
+    /// event_type: 0=move, 1=button press, 2=button release
+    pub fn send_mouse(
+        &mut self,
+        x: u16,
+        y: u16,
+        button: u32,
+        event_type: u32,
+    ) -> (u32, Vec<u8>) {
+        let mut operations = vec![Operation::MouseMove(MousePosition { x, y })];
+
+        let mouse_btn = match button {
+            1 => Some(MouseButton::Left),
+            2 => Some(MouseButton::Right),
+            3 => Some(MouseButton::Middle),
+            _ => None,
+        };
+
+        if let Some(btn) = mouse_btn {
+            match event_type {
+                1 => operations.push(Operation::MouseButtonPressed(btn)),
+                2 => operations.push(Operation::MouseButtonReleased(btn)),
+                _ => {} // move only
+            }
+        }
+
+        let events = self.input_db.apply(operations.into_iter());
+
+        match self
+            .active_stage
+            .process_fastpath_input(&mut self.image, &events)
+        {
+            Ok(outputs) => {
+                let mut response_bytes = Vec::new();
+                for output_item in outputs {
+                    if let ActiveStageOutput::ResponseFrame(frame) = output_item {
+                        response_bytes.extend_from_slice(&frame);
+                    }
+                }
+                (STATE_INPUT_SENT, response_bytes)
+            }
+            Err(e) => (
+                STATE_SESSION_ERROR,
+                format!("mouse input error: {}", e).into_bytes(),
             ),
         }
     }
