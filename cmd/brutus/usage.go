@@ -47,6 +47,7 @@ RDP Options:
   --sticky-keys          Enable sticky keys backdoor detection for RDP targets
   --sticky-keys-exec <cmd>  Execute a command via sticky keys backdoor (demo/pentest)
   --sticky-keys-web      Start interactive web terminal via sticky keys backdoor
+  --sticky-keys-open     Auto-open default browser for sticky keys web terminal
 
 Performance Options:
   -t <threads>           Number of concurrent threads (default: 10)

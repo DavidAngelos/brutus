@@ -260,7 +260,7 @@ func runStickyKeysInteractive(target, protocol string, base *baseConfigOptions) 
 	}
 
 	if base.stickyKeysWeb {
-		err := rdp.RunWebTerminal(ctx, target, base.timeout)
+		err := rdp.RunWebTerminal(ctx, target, base.timeout, base.stickyKeysOpen)
 		if err != nil && err != http.ErrServerClosed {
 			errMsg(base.useColor, "web terminal: %v", err)
 			result.Error = err

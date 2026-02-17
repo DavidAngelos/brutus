@@ -27,6 +27,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
+	"runtime"
 	"sync"
 	"time"
 
@@ -48,10 +50,24 @@ type wsMessage struct {
 	EventType string `json:"eventType,omitempty"` // "move", "down", "up" (mouse)
 }
 
+// openBrowser opens a URL in the user's default browser.
+func openBrowser(url string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	_ = cmd.Start()
+}
+
 // RunWebTerminal connects to an RDP target via sticky keys and serves an
 // interactive web terminal on localhost. Opens a browser-controllable RDP
 // session with live screen streaming, keyboard, and mouse input.
-func RunWebTerminal(ctx context.Context, target string, timeout time.Duration) error {
+func RunWebTerminal(ctx context.Context, target string, timeout time.Duration, openInBrowser bool) error {
 	fmt.Fprintf(os.Stderr, "[*] Connecting to %s for interactive web terminal...\n", target)
 
 	sess, err := NewInteractiveSession(ctx, target, timeout, 1024, 768)
@@ -142,6 +158,9 @@ func RunWebTerminal(ctx context.Context, target string, timeout time.Duration) e
 	fmt.Fprintf(os.Stderr, "  ╚══════════════════════════════════════════════════╝\n")
 	fmt.Fprintf(os.Stderr, "\n")
 
+	if openInBrowser {
+		openBrowser(url)
+	}
 	return server.Serve(listener)
 }
 

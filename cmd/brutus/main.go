@@ -118,6 +118,7 @@ func main() {
 	stickyKeys := flag.Bool("sticky-keys", false, "Enable sticky keys backdoor detection for RDP targets")
 	stickyKeysExec := flag.String("sticky-keys-exec", "", "Execute command via sticky keys backdoor (requires --sticky-keys)")
 	stickyKeysWeb := flag.Bool("sticky-keys-web", false, "Start interactive web terminal via sticky keys backdoor (requires --sticky-keys)")
+	stickyKeysOpen := flag.Bool("sticky-keys-open", false, "Auto-open browser when sticky keys web terminal starts")
 
 	flag.Parse()
 
@@ -216,6 +217,7 @@ func main() {
 		stickyKeys:       *stickyKeys,
 		stickyKeysExec:   *stickyKeysExec,
 		stickyKeysWeb:    *stickyKeysWeb,
+		stickyKeysOpen:   *stickyKeysOpen,
 	}
 
 	var allResults []brutus.Result

@@ -51,6 +51,7 @@ type baseConfigOptions struct {
 	stickyKeys       bool   // Enable sticky keys detection for RDP
 	stickyKeysExec   string // Command to execute via sticky keys backdoor
 	stickyKeysWeb    bool   // Start web terminal for sticky keys interaction
+	stickyKeysOpen   bool   // Auto-open browser when sticky keys web terminal starts
 }
 
 // determineTLSMode returns the appropriate TLS mode based on the verify-tls flag
