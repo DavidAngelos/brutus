@@ -114,7 +114,8 @@ func runWorkers(ctx context.Context, cfg *Config, plug Plugin) ([]Result, error)
 
 // executeWorkerPool is the shared worker pool implementation used by both
 // runWorkersDefault and runWorkersWithLLM. It handles concurrency control,
-// rate limiting, jitter, max attempts, result collection, and early stopping.
+// rate limiting, jitter, max attempts, retry with backoff, adaptive pacing,
+// result collection, and early stopping.
 func executeWorkerPool(ctx context.Context, cfg *Config, plug Plugin, credentials []credential, llmSuggestions []string) ([]Result, error) {
 	// Create cancellable context for early stop
 	ctx, cancel := context.WithCancel(ctx)
@@ -128,6 +129,12 @@ func executeWorkerPool(ctx context.Context, cfg *Config, plug Plugin, credential
 	var limiter *rate.Limiter
 	if cfg.RateLimit > 0 {
 		limiter = rate.NewLimiter(rate.Limit(cfg.RateLimit), 1)
+	}
+
+	// Create backoff controller for retry and adaptive pacing
+	var bc *backoffController
+	if cfg.MaxRetries > 0 {
+		bc = newBackoffController(500*time.Millisecond, 30*time.Second, cfg.Verbose)
 	}
 
 	// Result collection with mutex protection
@@ -214,20 +221,66 @@ func executeWorkerPool(ctx context.Context, cfg *Config, plug Plugin, credential
 			default:
 			}
 
-			// Test credential (key-based or password-based)
-			var result *Result
-			if cred.key != nil {
-				// Key-based authentication
-				// Check if plugin supports key auth
-				if kp, ok := plug.(KeyPlugin); ok {
-					result = kp.TestKey(ctx, cfg.Target, cred.username, cred.key, cfg.Timeout)
-				} else {
-					// Plugin doesn't support key auth, skip
-					return nil
+			// Apply adaptive pacing if backoff controller is active
+			if bc != nil {
+				if delay := bc.adaptiveDelay(); delay > 0 {
+					select {
+					case <-time.After(delay):
+					case <-ctx.Done():
+						return nil
+					}
 				}
-			} else {
-				// Password-based authentication
-				result = plug.Test(ctx, cfg.Target, cred.username, cred.password, cfg.Timeout)
+			}
+
+			// Test credential with retry on connection errors
+			var result *Result
+			maxAttempts := 1
+			if bc != nil {
+				maxAttempts = cfg.MaxRetries + 1
+			}
+
+			for attempt := 0; attempt < maxAttempts; attempt++ {
+				// Retry backoff (skip for first attempt)
+				if attempt > 0 {
+					delay := bc.retryDelay(attempt - 1)
+					select {
+					case <-time.After(delay):
+					case <-ctx.Done():
+						return nil
+					}
+				}
+
+				if cred.key != nil {
+					// Key-based authentication
+					if kp, ok := plug.(KeyPlugin); ok {
+						result = kp.TestKey(ctx, cfg.Target, cred.username, cred.key, cfg.Timeout)
+					} else {
+						// Plugin doesn't support key auth, skip
+						return nil
+					}
+				} else {
+					// Password-based authentication
+					result = plug.Test(ctx, cfg.Target, cred.username, cred.password, cfg.Timeout)
+				}
+
+				// If no connection error, stop retrying
+				if result.Error == nil {
+					break
+				}
+
+				// Connection error on last attempt - keep the error result
+				if attempt == maxAttempts-1 {
+					break
+				}
+			}
+
+			// Update adaptive controller
+			if bc != nil {
+				if result.Error != nil {
+					bc.recordError()
+				} else {
+					bc.recordSuccess()
+				}
 			}
 
 			// Populate LLM tracking fields if suggestions were provided
