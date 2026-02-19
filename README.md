@@ -624,6 +624,11 @@ Both flags can be combined (`--nla-check --sticky-keys-scan`) to run both checks
 
 ## Known Limitations
 
+### Sticky Keys Heuristic Detection
+
+- **Alternating false negatives:** The heuristic-only detection (`--sticky-keys` without `--experimental-ai`) may produce false negatives on repeated scans against the same target. After a successful detection, the cmd.exe window remains open on the server. Subsequent connections see the cmd.exe in the baseline frame, and since sending 5x Shift doesn't create a new window, the pixel difference is minimal — resulting in a "clean" verdict. This does not affect `--experimental-ai` mode, which uses Vision API analysis of the response frame directly (not a baseline-vs-response diff) and reliably identifies the terminal window regardless of prior state.
+- **Workaround:** Use `--experimental-ai` with `ANTHROPIC_API_KEY` set for consistent detection across repeated scans, or allow a cooldown between scans for the RDP session to reset.
+
 ### Browser Plugin
 
 - Requires Chrome/Chromium installed locally

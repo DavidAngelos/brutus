@@ -47,9 +47,6 @@ type StickyKeysResult struct {
 // leftShiftScancode is the scancode for Left Shift key (used for sticky keys detection).
 const leftShiftScancode = 0x2A
 
-// exitScancodes types "exit" + Enter to close a cmd.exe window (PS/2 Set 1).
-// Used after detection to reset the server state for subsequent connections.
-var exitScancodes = []uint16{0x12, 0x2D, 0x17, 0x14, 0x1C} // e, x, i, t, Enter
 
 // runConnectorForSession drives the connector state machine and returns the connector handle
 // (for session handoff) instead of consuming it. Similar to runConnector but doesn't free the handle.
@@ -249,18 +246,6 @@ func (p *Plugin) runSession(ctx context.Context, inst *wasmInstance, connHandle 
 	if err != nil {
 		return nil, nil, 0, 0, fmt.Errorf("capture response: %w", err)
 	}
-
-	// Clean up: if a terminal window opened, close it by typing "exit" + Enter.
-	// This prevents the next connection from seeing the cmd.exe as its baseline,
-	// which would cause every-other-run detection failures.
-	for _, sc := range exitScancodes {
-		_ = p.sendKey(ctx, inst, sessHandle, sc, true)
-		time.Sleep(20 * time.Millisecond)
-		_ = p.sendKey(ctx, inst, sessHandle, sc, false)
-		time.Sleep(20 * time.Millisecond)
-	}
-	// Small delay for the exit command to process
-	time.Sleep(200 * time.Millisecond)
 
 	return baseline, response, width, height, nil
 }
