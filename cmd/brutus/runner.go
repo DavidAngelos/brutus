@@ -83,9 +83,24 @@ func runFromStdin(base *baseConfigOptions, jsonOut bool) ([]brutus.Result, bool)
 		// Output valid credentials immediately (streaming for large-scale scans)
 		if !jsonOut {
 			outputValidOnly(results, base.useColor)
+			// Also output security findings (e.g., sticky keys detection)
+			for i := range results {
+				r := &results[i]
+				if r.Banner != "" && hasSecurityFinding(r.Banner) {
+					if base.useColor {
+						fmt.Printf("\n%s\n", heading(base.useColor, "Security Findings"))
+						fmt.Printf("  %s @ %s\n", r.Protocol, r.Target)
+						for _, line := range splitLines(r.Banner) {
+							fmt.Printf("  %s\n", line)
+						}
+					} else {
+						fmt.Printf("%s @ %s: %s\n", r.Protocol, r.Target, r.Banner)
+					}
+					break // One findings block per target
+				}
+			}
 		}
 	}
-
 	if err := scanner.Err(); err != nil {
 		errMsg(base.useColor, "reading stdin: %v", err)
 	}
@@ -138,6 +153,11 @@ func runSingleTarget(target, protocol, tlsMode string, base *baseConfigOptions, 
 	// Sticky keys interactive modes: bypass brute force entirely
 	if protocol == "rdp" && base.stickyKeys && (base.stickyKeysExec != "" || base.stickyKeysWeb) {
 		return runStickyKeysInteractive(target, protocol, base)
+	}
+
+	// Sticky keys detection-only mode: no explicit credentials means skip brute force
+	if protocol == "rdp" && base.stickyKeys && len(base.passwords) == 0 && len(base.keys) == 0 {
+		return runStickyKeysDetectionOnly(target, base)
 	}
 
 	// Verbose: print config summary before starting
@@ -294,6 +314,55 @@ func runStickyKeysInteractive(target, protocol string, base *baseConfigOptions) 
 	}
 
 	return nil, false
+}
+
+// runStickyKeysDetectionOnly runs sticky keys detection without brute force.
+// Used when --sticky-keys is set but no explicit credentials (-p/-P/-k) are provided.
+func runStickyKeysDetectionOnly(target string, base *baseConfigOptions) ([]brutus.Result, bool) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	logVerbose(base.verbose, "Sticky keys detection-only mode (no credentials provided)")
+	logVerbose(base.verbose, "Target: %s", target)
+
+	// Vision API requires --experimental-ai; disable it otherwise
+	if !base.aiMode {
+		ctx = brutus.ContextWithNoVision(ctx)
+	}
+
+	plugin := &rdp.Plugin{}
+	stickyResult := plugin.RunStickyKeysCheck(ctx, target, base.timeout)
+
+	result := brutus.Result{
+		Protocol: "rdp",
+		Target:   target,
+		Username: "(sticky-keys)",
+	}
+
+	if stickyResult == nil {
+		result.Error = fmt.Errorf("sticky keys check returned nil")
+		return []brutus.Result{result}, false
+	}
+
+	if !stickyResult.Performed {
+		result.Banner = fmt.Sprintf("[INFO] Sticky keys check skipped: %s", stickyResult.SkipReason)
+		return []brutus.Result{result}, false
+	}
+
+	result.Success = true
+	switch stickyResult.OverallVerdict {
+	case "backdoor_confirmed":
+		result.Banner = fmt.Sprintf("[CRITICAL] Sticky keys backdoor CONFIRMED (confidence: %.0f%%)", stickyResult.Confidence*100)
+	case "backdoor_likely":
+		result.Banner = fmt.Sprintf("[HIGH] Sticky keys backdoor likely (confidence: %.0f%%)", stickyResult.Confidence*100)
+	case "vulnerable":
+		result.Banner = "[INFO] Non-NLA target, sticky keys triggers normally (no backdoor)"
+	case "clean":
+		result.Banner = "[INFO] Sticky keys check: clean (no response to 5x Shift)"
+		result.Success = false
+	}
+
+	return []brutus.Result{result}, result.Success
 }
 
 // runScanFromStdin reads fingerprintx JSON from stdin and runs scan checks on RDP targets.

@@ -114,15 +114,15 @@ func analyzeStickyKeysResponse(baseline, response []byte, width, height uint32) 
 	// Check if changed pixels form a rectangular region (characteristic of a terminal window)
 	isRect, rectScore := detectChangedRectangle(baseline, response, width, height)
 
-	if isRect && changedPercent > 5.0 {
+	if isRect && changedPercent > 3.0 {
 		confidence := math.Min(0.85, changedPercent/20.0+rectScore*0.5)
 		return "backdoor_likely", confidence,
 			fmt.Sprintf("%.1f%% pixels changed in rectangular region (rect score: %.2f)", changedPercent, rectScore)
 	}
 
-	if changedPercent > 3.0 {
-		return "vulnerable", 0.3,
-			fmt.Sprintf("%.1f%% pixels changed (possibly sticky keys dialog)", changedPercent)
+	if changedPercent > 2.5 {
+		return "backdoor_likely", 0.4,
+			fmt.Sprintf("%.1f%% pixels changed (possible terminal window)", changedPercent)
 	}
 
 	return "clean", 0.1, fmt.Sprintf("%.1f%% pixels changed (minor change)", changedPercent)
@@ -176,8 +176,9 @@ func detectChangedRectangle(baseline, response []byte, width, height uint32) (is
 	boundingArea := (maxX - minX + 1) * (maxY - minY + 1)
 	fillRatio := float64(changedCount) / float64(boundingArea)
 
-	// Threshold: >60% fill and at least 1% of total screen area
-	isRectangular = fillRatio > 0.6 && boundingArea > (w*h/100)
+	// Threshold: >40% fill and at least 1% of total screen area.
+	// Lowered from 60% to catch terminal windows with thin borders and sparse content.
+	isRectangular = fillRatio > 0.4 && boundingArea > (w*h/100)
 	return isRectangular, fillRatio
 }
 

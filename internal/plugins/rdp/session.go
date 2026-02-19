@@ -232,8 +232,9 @@ func (p *Plugin) runSession(ctx context.Context, inst *wasmInstance, connHandle 
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	// Wait for response and pump
-	time.Sleep(500 * time.Millisecond)
+	// Wait for response and pump — give cmd.exe time to render before capturing.
+	// The exec.go path uses 1s sleep + 2s WaitForFrame; we mirror that here.
+	time.Sleep(1500 * time.Millisecond)
 	if pumpErr := p.pumpSession(ctx, inst, sessHandle, 3*time.Second); pumpErr != nil {
 		// Non-fatal -- target might not respond
 		_ = pumpErr
