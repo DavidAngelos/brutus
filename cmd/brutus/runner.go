@@ -295,3 +295,119 @@ func runStickyKeysInteractive(target, protocol string, base *baseConfigOptions) 
 
 	return nil, false
 }
+
+// runScanFromStdin reads fingerprintx JSON from stdin and runs scan checks on RDP targets.
+func runScanFromStdin(base *baseConfigOptions) ([]brutus.Result, bool) {
+	var allResults []brutus.Result
+	hasSuccess := false
+
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		var fpx FingerprintxResult
+		if err := json.Unmarshal([]byte(line), &fpx); err != nil {
+			warnMsg(base.useColor, "failed to parse JSON: %v", err)
+			continue
+		}
+
+		// Filter to RDP targets only
+		protocol := mapServiceToProtocol(fpx.Protocol)
+		if protocol != "rdp" && base.protocolOverride != "rdp" {
+			continue
+		}
+
+		target := fmt.Sprintf("%s:%d", fpx.IP, fpx.Port)
+		results, success := runScanSingleTarget(target, base)
+		allResults = append(allResults, results...)
+		if success {
+			hasSuccess = true
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		errMsg(base.useColor, "reading stdin: %v", err)
+	}
+
+	return allResults, hasSuccess
+}
+
+// runScanSingleTarget runs scan-only checks (NLA and/or sticky keys) on a single target.
+func runScanSingleTarget(target string, base *baseConfigOptions) ([]brutus.Result, bool) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var results []brutus.Result
+	hasSuccess := false
+
+	if base.nlaCheck {
+		nlaResult := rdp.CheckNLA(ctx, target, base.timeout)
+		result := brutus.Result{
+			Protocol: "rdp",
+			Target:   target,
+			Username: "(nla-check)",
+			Success:  nlaResult.Error == "",
+		}
+		if nlaResult.Error != "" {
+			result.Error = fmt.Errorf("%s", nlaResult.Error)
+			result.Banner = fmt.Sprintf("[INFO] NLA check error: %s", nlaResult.Error)
+		} else if nlaResult.RequiresNLA {
+			result.Banner = fmt.Sprintf("[INFO] NLA required (protocol: %s)", nlaResult.SelectedProtocol)
+			result.Success = true
+			hasSuccess = true
+		} else {
+			result.Banner = fmt.Sprintf("[HIGH] Non-NLA target (protocol: %s) - login screen exposed pre-auth", nlaResult.SelectedProtocol)
+			result.Success = true
+			hasSuccess = true
+		}
+		results = append(results, result)
+	}
+
+	if base.stickyKeysScan {
+		stickyResult := runStickyKeysScanTarget(ctx, target, base)
+		results = append(results, stickyResult)
+		if stickyResult.Success {
+			hasSuccess = true
+		}
+	}
+
+	return results, hasSuccess
+}
+
+// runStickyKeysScanTarget performs sticky keys detection on a single target without brute force.
+func runStickyKeysScanTarget(ctx context.Context, target string, base *baseConfigOptions) brutus.Result {
+	result := brutus.Result{
+		Protocol: "rdp",
+		Target:   target,
+		Username: "(sticky-keys-scan)",
+	}
+
+	plugin := &rdp.Plugin{}
+	stickyResult := plugin.RunStickyKeysCheck(ctx, target, base.timeout)
+	if stickyResult == nil {
+		result.Error = fmt.Errorf("sticky keys check returned nil")
+		return result
+	}
+
+	if !stickyResult.Performed {
+		result.Banner = fmt.Sprintf("[INFO] Sticky keys scan skipped: %s", stickyResult.SkipReason)
+		return result
+	}
+
+	result.Success = true
+	switch stickyResult.OverallVerdict {
+	case "backdoor_confirmed":
+		result.Banner = fmt.Sprintf("[CRITICAL] Sticky keys backdoor CONFIRMED (confidence: %.0f%%)", stickyResult.Confidence*100)
+	case "backdoor_likely":
+		result.Banner = fmt.Sprintf("[HIGH] Sticky keys backdoor likely (confidence: %.0f%%)", stickyResult.Confidence*100)
+	case "vulnerable":
+		result.Banner = "[INFO] Non-NLA target, sticky keys triggers normally (no backdoor)"
+	case "clean":
+		result.Banner = "[INFO] Sticky keys check: clean (no response to 5x Shift)"
+	}
+
+	return result
+}

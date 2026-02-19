@@ -94,7 +94,7 @@ func main() {
 	snmpTier := flag.String("snmp-tier", "default", "SNMP community string tier: default (20), extended (50), full (120)")
 	rateLimit := flag.Float64("rate-limit", 0, "Max requests per second (0 = unlimited)")
 	jitter := flag.Duration("jitter", 0, "Random delay variance for rate limiting (e.g., 100ms)")
-	stdinMode := flag.Bool("stdin", false, "Read targets from stdin (fingerprintx JSON format)")
+	stdinMode := flag.Bool("fingerprintx", false, "Read targets from fingerprintx JSON on stdin")
 	maxAttempts := flag.Int("max-attempts", 0, "Max password attempts per user (0 = unlimited)")
 	sprayMode := flag.Bool("spray", false, "Password spraying: try each password across all users")
 	showBanner := flag.Bool("banner", true, "Show ASCII banner")
@@ -119,6 +119,8 @@ func main() {
 	stickyKeysExec := flag.String("sticky-keys-exec", "", "Execute command via sticky keys backdoor (requires --sticky-keys)")
 	stickyKeysWeb := flag.Bool("sticky-keys-web", false, "Start interactive web terminal via sticky keys backdoor (requires --sticky-keys)")
 	stickyKeysOpen := flag.Bool("sticky-keys-open", false, "Auto-open browser when sticky keys web terminal starts")
+	nlaCheck := flag.Bool("nla-check", false, "NLA fingerprint scan: check if RDP targets require NLA (no auth, fast)")
+	stickyKeysScan := flag.Bool("sticky-keys-scan", false, "Sticky keys scan-only mode: detect backdoor without brute force")
 
 	flag.Parse()
 
@@ -139,10 +141,10 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Auto-detect stdin mode: if stdin has data and no target specified, use stdin mode
+	// Auto-detect fingerprintx mode: if stdin has data and no target specified, use fingerprintx mode
 	useStdin := detectStdinMode(*stdinMode, *target)
 
-	// Show banner (unless in JSON mode, stdin mode, or quiet mode)
+	// Show banner (unless in JSON mode, fingerprintx mode, or quiet mode)
 	if shouldShowBanner(*showBanner, *jsonOutput, useStdin, *quiet, useColor) {
 		printBanner(useColor)
 	}
@@ -218,10 +220,38 @@ func main() {
 		stickyKeysExec:   *stickyKeysExec,
 		stickyKeysWeb:    *stickyKeysWeb,
 		stickyKeysOpen:   *stickyKeysOpen,
+		nlaCheck:         *nlaCheck,
+		stickyKeysScan:   *stickyKeysScan,
 	}
 
 	var allResults []brutus.Result
 	var hasSuccess bool
+
+
+	// Scan-only modes: bypass normal brute force entirely
+	if baseConfig.nlaCheck || baseConfig.stickyKeysScan {
+		var scanResults []brutus.Result
+		if useStdin {
+			scanResults, hasSuccess = runScanFromStdin(&baseConfig)
+		} else {
+			if *target == "" {
+				errMsg(useColor, "--target is required for scan modes (or pipe fingerprintx JSON to stdin)")
+				closeOutput()
+				os.Exit(1)
+			}
+			scanResults, hasSuccess = runScanSingleTarget(*target, &baseConfig)
+		}
+		if *jsonOutput {
+			outputScanJSONL(jsonWriter, scanResults)
+		} else {
+			outputScanHuman(scanResults, useColor)
+		}
+		closeOutput()
+		if !hasSuccess {
+			os.Exit(1)
+		}
+		return
+	}
 
 	if useStdin {
 		allResults, hasSuccess = runFromStdin(&baseConfig, *jsonOutput)
@@ -235,7 +265,7 @@ func main() {
 		allResults, hasSuccess = runSingleTargetMode(*target, *protocol, &baseConfig, *jsonOutput, jsonWriter)
 	}
 
-	// Final JSON output for stdin mode
+	// Final JSON output for fingerprintx mode
 	if *jsonOutput && useStdin {
 		outputJSONL(jsonWriter, allResults)
 	}
@@ -288,7 +318,7 @@ func validateKeyFileFlags(keyFile, usernames string) error {
 // validateTargetFlags checks that required flags are provided for single-target mode.
 func validateTargetFlags(target, protocol string) error {
 	if target == "" {
-		return fmt.Errorf("--target is required (or pipe data to stdin)")
+		return fmt.Errorf("--target is required (or pipe fingerprintx JSON to stdin)")
 	}
 	if protocol == "" {
 		return fmt.Errorf("--protocol is required when using --target\nExample: brutus --target %s --protocol ssh", target)

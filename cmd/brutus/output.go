@@ -195,3 +195,71 @@ func splitLines(s string) []string {
 	}
 	return lines
 }
+
+// outputScanHuman writes scan results in human-readable format.
+func outputScanHuman(results []brutus.Result, useColor bool) {
+	for i := range results {
+		r := &results[i]
+		scanType := "NLA Check"
+		if r.Username == "(sticky-keys-scan)" {
+			scanType = "Sticky Keys Scan"
+		}
+
+		finding := extractFinding(r.Banner)
+		color, symbol := ColorCyan, SymbolInfo
+		switch finding {
+		case "[CRITICAL]":
+			color, symbol = ColorRed, SymbolError
+		case "[HIGH]":
+			color, symbol = ColorYellow, SymbolWarning
+		}
+
+		if useColor {
+			fmt.Printf("%s%s %s: %s%s  %s\n", color, symbol, scanType, r.Target, ColorReset, r.Banner)
+		} else {
+			fmt.Printf("%s: %s  %s\n", scanType, r.Target, r.Banner)
+		}
+	}
+}
+
+// outputScanJSONL writes scan results as JSONL for pipeline consumption.
+func outputScanJSONL(w io.Writer, results []brutus.Result) {
+	type ScanResult struct {
+		Protocol string `json:"protocol"`
+		Target   string `json:"target"`
+		ScanType string `json:"scan_type"`
+		Finding  string `json:"finding"`
+		Banner   string `json:"banner"`
+		Success  bool   `json:"success"`
+	}
+
+	enc := json.NewEncoder(w)
+	for i := range results {
+		r := &results[i]
+		scanType := "nla_check"
+		if r.Username == "(sticky-keys-scan)" {
+			scanType = "sticky_keys_scan"
+		}
+		sr := ScanResult{
+			Protocol: r.Protocol,
+			Target:   r.Target,
+			ScanType: scanType,
+			Finding:  extractFinding(r.Banner),
+			Banner:   r.Banner,
+			Success:  r.Success,
+		}
+		if err := enc.Encode(sr); err != nil {
+			fmt.Fprintf(os.Stderr, "Error encoding scan JSON: %v\n", err)
+		}
+	}
+}
+
+// extractFinding extracts the severity tag from a banner string.
+func extractFinding(banner string) string {
+	for _, tag := range []string{"[CRITICAL]", "[HIGH]", "[INFO]"} {
+		if strings.Contains(banner, tag) {
+			return tag
+		}
+	}
+	return ""
+}

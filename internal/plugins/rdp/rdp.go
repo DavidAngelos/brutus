@@ -155,7 +155,7 @@ func (p *Plugin) Test(ctx context.Context, target, username, password string,
 	// Sticky keys detection: runs on a separate non-NLA connection regardless of
 	// auth result, since it's a pre-auth check that doesn't require credentials.
 	if shouldRunStickyKeysCheck(ctx) {
-		stickyResult := p.runStickyKeysCheck(ctx, target, timeout)
+		stickyResult := p.RunStickyKeysCheck(ctx, target, timeout)
 		if stickyResult != nil {
 			result.Banner = formatStickyKeysBanner(result.Banner, stickyResult)
 		}
@@ -387,8 +387,8 @@ func shouldRunStickyKeysCheck(ctx context.Context) bool {
 	return !brutus.NoStickyKeysFromContext(ctx)
 }
 
-// runStickyKeysCheck performs sticky keys detection on a separate connection.
-func (p *Plugin) runStickyKeysCheck(ctx context.Context, target string, timeout time.Duration) *StickyKeysResult {
+// RunStickyKeysCheck performs sticky keys detection on a separate connection.
+func (p *Plugin) RunStickyKeysCheck(ctx context.Context, target string, timeout time.Duration) *StickyKeysResult {
 	host, port := brutus.ParseTarget(target, "3389")
 	addr := net.JoinHostPort(host, port)
 

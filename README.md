@@ -546,6 +546,68 @@ Open the displayed URL (e.g., `http://127.0.0.1:<port>`) in any browser to inter
 
 **B-TP (Benign True Positive) considerations:** The backdoor replacement may also indicate forgotten password recovery procedures or artifacts from authorized penetration tests.
 
+### Mass RDP Scanning Pipeline (`--nla-check` + `--sticky-keys-scan`)
+
+For large-scale assessments, Brutus provides two scan-only flags that bypass brute force entirely and output structured JSONL for pipeline integration:
+
+**Phase 1: NLA Fingerprinting** — Fast TCP-only probe (~100ms per target) that determines whether an RDP target requires Network Level Authentication:
+
+```bash
+# Check NLA status of a single target
+brutus --target 10.0.0.50:3389 --nla-check
+
+# Pipeline: scan a /24 for non-NLA RDP targets
+naabu -host 10.0.0.0/24 -p 3389 -silent | \
+  fingerprintx --json | \
+  brutus --nla-check --json
+```
+
+NLA check output classifies each target:
+- `[HIGH] Non-NLA target (protocol: rdp)` — Login screen exposed pre-auth, sticky keys testable
+- `[INFO] NLA required (protocol: nla)` — CredSSP required, credentials needed before login screen
+
+**Phase 2: Sticky Keys Scan** — Connects to non-NLA targets, triggers the 5x Shift sequence, and checks for a backdoor. No credentials needed:
+
+```bash
+# Scan a single target for sticky keys backdoor
+brutus --target 10.0.0.50:3389 --sticky-keys-scan
+
+# Pipeline: scan only non-NLA targets
+naabu -host 10.0.0.0/24 -p 3389 -silent | \
+  fingerprintx --json | \
+  brutus --sticky-keys-scan --json
+```
+
+**Full two-phase pipeline** — Combine both scans for complete RDP assessment:
+
+```bash
+# Phase 1: Find non-NLA targets
+naabu -host 10.0.0.0/16 -p 3389 -rate 1000 -silent | \
+  fingerprintx --json | \
+  brutus --nla-check --json -o nla-results.json
+
+# Filter non-NLA targets
+jq -r 'select(.finding == "[HIGH]") | "\(.target)"' nla-results.json > non-nla-targets.txt
+
+# Phase 2: Check non-NLA targets for sticky keys backdoor
+cat non-nla-targets.txt | \
+  xargs -I {} brutus --target {} --sticky-keys-scan --json | \
+  tee sticky-keys-findings.json
+
+# Extract critical findings
+jq 'select(.finding == "[CRITICAL]")' sticky-keys-findings.json
+```
+
+**Scan JSONL output format:**
+
+```json
+{"protocol":"rdp","target":"10.0.0.50:3389","scan_type":"nla_check","finding":"[HIGH]","banner":"[HIGH] Non-NLA target (protocol: rdp) - login screen exposed pre-auth","success":true}
+{"protocol":"rdp","target":"10.0.0.51:3389","scan_type":"nla_check","finding":"[INFO]","banner":"[INFO] NLA required (protocol: nla)","success":true}
+{"protocol":"rdp","target":"10.0.0.50:3389","scan_type":"sticky_keys_scan","finding":"[CRITICAL]","banner":"[CRITICAL] Sticky keys backdoor CONFIRMED (confidence: 85%)","success":true}
+```
+
+Both flags can be combined (`--nla-check --sticky-keys-scan`) to run both checks in a single pass. Both accept stdin from fingerprintx (filtering to RDP targets automatically) or a single `--target`.
+
 **Technical implementation:** RDP protocol support uses [IronRDP](https://github.com/Devolutions/IronRDP) (Rust) compiled to WebAssembly and executed via [wazero](https://github.com/tetragonalworks/wazero), maintaining Brutus's zero-CGO, single-binary design.
 
 ---

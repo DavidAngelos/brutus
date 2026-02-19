@@ -84,10 +84,16 @@ func (m *sessionManager) Reconnect(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Close old session
-	if m.sess != nil {
-		m.sess.Close()
+	// Nil out the session pointer first so goroutines see nil and skip,
+	// then close the old session. This prevents panics from goroutines
+	// accessing freed WASM resources during the reconnect window.
+	oldSess := m.sess
+	m.sess = nil
+	if oldSess != nil {
+		oldSess.Close()
 	}
+	// Brief pause to let in-flight goroutines notice the nil session
+	time.Sleep(200 * time.Millisecond)
 
 	// Create new session
 	newSess, sessErr := NewInteractiveSession(ctx, m.target, m.timeout, 1024, 768)
@@ -203,10 +209,15 @@ func RunWebTerminal(ctx context.Context, target string, timeout time.Duration, o
 	})
 	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
 		curSess := mgr.Session()
+		var width, height uint32 = 1024, 768
+		if curSess != nil {
+			width = curSess.Width()
+			height = curSess.Height()
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"width":  curSess.Width(),
-			"height": curSess.Height(),
+			"width":  width,
+			"height": height,
 			"target": target,
 			"token":  token,
 		})
@@ -294,6 +305,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, mgr *sessionManager
 		}
 
 		curSess := mgr.Session()
+		if curSess == nil {
+			continue // Session is being replaced during reconnect
+		}
 
 		switch wsMsg.Type {
 		case "key":
@@ -336,6 +350,14 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request, mgr *sessionManager
 
 // streamFrames continuously captures the RDP screen and sends JPEG frames over WebSocket.
 func streamFrames(ctx context.Context, cancel context.CancelFunc, conn net.Conn, mu *sync.Mutex, mgr *sessionManager) {
+	// Recover from panics caused by accessing a closed/freed session during reconnect.
+	defer func() {
+		if r := recover(); r != nil {
+			// Session was closed during reconnect — not a fatal error.
+			// The browser will reconnect with a new WebSocket after /reconnect succeeds.
+		}
+	}()
+
 	ticker := time.NewTicker(100 * time.Millisecond) // ~10 FPS
 	defer ticker.Stop()
 
@@ -349,6 +371,9 @@ func streamFrames(ctx context.Context, cancel context.CancelFunc, conn net.Conn,
 		}
 
 		curSess := mgr.Session()
+		if curSess == nil {
+			continue // Session is being replaced during reconnect
+		}
 
 		// Check for pump errors and notify browser
 		if !pumpErrSent {

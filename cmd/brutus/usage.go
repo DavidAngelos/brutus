@@ -30,7 +30,7 @@ Usage:
 
 Target Options:
   --target <host:port>   Target host and port (requires --protocol)
-  --stdin                Read targets from stdin (fingerprintx JSON format)
+  --fingerprintx         Read targets from fingerprintx JSON on stdin
   --protocol <proto>     Protocol to use (auto-detected in pipeline mode)
 
 Credential Options:
@@ -102,11 +102,11 @@ Fingerprintx Integration:
   and credential testing. Use naabu for port discovery, fingerprintx for service
   fingerprinting (with --json output), then pipe to Brutus:
 
-    naabu -host <targets> -silent | fingerprintx --json | brutus --stdin [options]
+    naabu -host <targets> -silent | fingerprintx --json | brutus --fingerprintx [options]
 
   For known open ports, pipe directly to fingerprintx:
 
-    echo "host:port" | fingerprintx --json | brutus --stdin [options]
+    echo "host:port" | fingerprintx --json | brutus --fingerprintx [options]
 
   Brutus automatically detects protocols from fingerprintx JSON output,
   eliminating the need to specify -protocol manually.
@@ -123,13 +123,13 @@ Supported Protocols:
 
 Examples:
   # Scan network range with naabu, fingerprint services, and test credentials
-  naabu -host 192.168.1.0/24 -silent | fingerprintx --json | brutus --stdin -P passwords.txt
+  naabu -host 192.168.1.0/24 -silent | fingerprintx --json | brutus --fingerprintx -P passwords.txt
 
   # Targeted port scan with service fingerprinting and credential testing
-  naabu -host 10.0.0.1 -p 22,3306 -silent | fingerprintx --json | brutus --stdin -u root -p "toor,admin"
+  naabu -host 10.0.0.1 -p 22,3306 -silent | fingerprintx --json | brutus --fingerprintx -u root -p "toor,admin"
 
   # Fingerprint known open ports and test with private keys
-  echo "192.168.1.10:22" | fingerprintx --json | brutus --stdin -u root,ubuntu -k ~/.ssh/id_rsa
+  echo "192.168.1.10:22" | fingerprintx --json | brutus --fingerprintx -u root,ubuntu -k ~/.ssh/id_rsa
 
   # Single target mode
   brutus --target 192.168.1.10:22 --protocol ssh -p "password,Password1"

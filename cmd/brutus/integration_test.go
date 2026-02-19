@@ -88,7 +88,7 @@ func TestFingerprintxIntegration(t *testing.T) {
 	defer os.Remove("brutus_test")
 
 	// Run brutus with fingerprintx output via stdin
-	brutusCmd := exec.Command("./brutus_test", "--stdin", "-p", "admin", "--json")
+	brutusCmd := exec.Command("./brutus_test", "--fingerprintx", "-p", "admin", "--json")
 	brutusCmd.Stdin = bytes.NewReader(fpxOutput)
 	brutusOutput, err := brutusCmd.CombinedOutput()
 
@@ -220,7 +220,7 @@ func TestServiceToProtocolMapping(t *testing.T) {
 	}
 }
 
-// TestStdinMode tests the --stdin flag with simulated fingerprintx output
+// TestStdinMode tests the --fingerprintx flag with simulated fingerprintx output
 func TestStdinMode(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -256,7 +256,7 @@ func TestStdinMode(t *testing.T) {
 	defer os.Remove("brutus_test")
 
 	// Run brutus with stdin and valid credentials
-	brutusCmd := exec.Command("./brutus_test", "--stdin", "-u", "testuser", "-p", "testpass", "--json")
+	brutusCmd := exec.Command("./brutus_test", "--fingerprintx", "-u", "testuser", "-p", "testpass", "--json")
 	brutusCmd.Stdin = strings.NewReader(fpxJSON)
 	output, err := brutusCmd.CombinedOutput()
 
