@@ -362,6 +362,11 @@ func runStickyKeysDetectionOnly(target string, base *baseConfigOptions) ([]brutu
 		result.Success = false
 	}
 
+	logVerbose(base.verbose, "Sticky keys result: %s (confidence: %.0f%%)", stickyResult.OverallVerdict, stickyResult.Confidence*100)
+	if stickyResult.HeuristicResult != "" {
+		logVerbose(base.verbose, "Heuristic: %s", stickyResult.HeuristicResult)
+	}
+
 	return []brutus.Result{result}, result.Success
 }
 
