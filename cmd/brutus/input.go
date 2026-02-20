@@ -64,6 +64,43 @@ func loadPasswords(inline, file string, inlineFlagSet bool) ([]string, error) {
 	return passwords, nil
 }
 
+func loadUsernames(inline, file string, inlineFlagSet bool) ([]string, error) {
+	var usernames []string
+
+	// Load from inline flag
+	if inlineFlagSet {
+		usernames = append(usernames, strings.Split(inline, ",")...)
+	}
+
+	// Load from file
+	if file != "" {
+		f, err := os.Open(file)
+		if err != nil {
+			return nil, fmt.Errorf("opening username file: %w", err)
+		}
+
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := scanner.Text()
+			trimmed := strings.TrimSpace(line)
+			// Skip comments and empty lines
+			if strings.HasPrefix(trimmed, "#") || trimmed == "" {
+				continue
+			}
+			usernames = append(usernames, trimmed)
+		}
+
+		scanErr := scanner.Err()
+		f.Close()
+
+		if scanErr != nil {
+			return nil, fmt.Errorf("reading username file: %w", scanErr)
+		}
+	}
+
+	return usernames, nil
+}
+
 func loadKey(keyFile string) ([][]byte, error) {
 	if keyFile == "" {
 		return nil, nil

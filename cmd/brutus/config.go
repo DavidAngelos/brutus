@@ -45,6 +45,7 @@ type baseConfigOptions struct {
 	rateLimit         float64             // Max requests per second (0 = unlimited)
 	jitter            time.Duration       // Random delay variance for rate limiting
 	maxAttempts       int
+	maxRetries        int
 	sprayMode         bool
 	anthropicKey      string              // ANTHROPIC_API_KEY (read once in main)
 	perplexityKey     string              // PERPLEXITY_API_KEY (read once in main)

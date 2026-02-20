@@ -110,6 +110,8 @@ func runSingleTarget(target, protocol, tlsMode string, base *baseConfigOptions, 
 		Jitter:        base.jitter,
 		MaxAttempts:   base.maxAttempts,
 		SprayMode:     base.sprayMode,
+		MaxRetries:    base.maxRetries,
+		Verbose:       base.verbose,
 	}
 
 	// Handle SNMP-specific tier selection (tiers are CLI-only, not in library defaults)
