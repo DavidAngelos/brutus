@@ -1,0 +1,255 @@
+// Copyright 2026 Praetorian Security, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package rdp
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"image"
+	"image/color"
+	"image/png"
+	"math"
+)
+
+const (
+	// changeThreshold: per-pixel brightness difference to count as "changed"
+	changeThreshold = 30
+	// minChangedPercent: minimum percentage of changed pixels for detection
+	minChangedPercent = 2.0
+	// maxChangedPercent: maximum percentage (above this, probably full screen change)
+	maxChangedPercent = 80.0
+)
+
+// bitmapDiff computes the absolute difference between two RGBA buffers.
+// Returns a diff buffer of the same size where each pixel is the max channel diff.
+func bitmapDiff(baseline, response []byte, width, height uint32) []byte {
+	size := int(width) * int(height) * 4
+	if len(baseline) < size || len(response) < size {
+		return nil
+	}
+
+	diff := make([]byte, size)
+	for i := 0; i < size; i += 4 {
+		dr := absDiffByte(baseline[i], response[i])
+		dg := absDiffByte(baseline[i+1], response[i+1])
+		db := absDiffByte(baseline[i+2], response[i+2])
+		maxD := maxByte(dr, maxByte(dg, db))
+		diff[i] = maxD
+		diff[i+1] = maxD
+		diff[i+2] = maxD
+		diff[i+3] = 255
+	}
+	return diff
+}
+
+func absDiffByte(a, b byte) byte {
+	if a > b {
+		return a - b
+	}
+	return b - a
+}
+
+func maxByte(a, b byte) byte {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// pixelBrightness returns the average brightness (0-255) of an RGBA pixel at offset i.
+func pixelBrightness(buf []byte, i int) int {
+	return (int(buf[i]) + int(buf[i+1]) + int(buf[i+2])) / 3
+}
+
+// analyzeStickyKeysResponse analyzes the difference between baseline and response frames.
+// It detects any new rectangular region (dark for cmd.exe, blue for PowerShell, etc.)
+// that appeared after sending 5x Shift.
+// Returns (verdict, confidence, description).
+func analyzeStickyKeysResponse(baseline, response []byte, width, height uint32) (verdict string, confidence float64, description string) {
+	totalPixels := int(width) * int(height)
+	if totalPixels == 0 {
+		return "clean", 0, "no pixels to analyze"
+	}
+
+	// Count pixels that changed significantly between baseline and response.
+	// This catches any terminal window regardless of color scheme:
+	// cmd.exe (black bg), PowerShell (blue bg), custom terminals, etc.
+	changedPixels := 0
+	for i := 0; i < totalPixels*4; i += 4 {
+		if i+2 >= len(response) || i+2 >= len(baseline) {
+			break
+		}
+		diff := pixelBrightness(baseline, i) - pixelBrightness(response, i)
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > changeThreshold {
+			changedPixels++
+		}
+	}
+
+	changedPercent := float64(changedPixels) / float64(totalPixels) * 100.0
+
+	if changedPercent < minChangedPercent {
+		return "clean", 0, fmt.Sprintf("%.1f%% pixels changed (below %.1f%% threshold)", changedPercent, minChangedPercent)
+	}
+
+	if changedPercent > maxChangedPercent {
+		return "clean", 0, fmt.Sprintf("%.1f%% pixels changed (full screen change, not a window)", changedPercent)
+	}
+
+	// Check if changed pixels form a rectangular region (characteristic of a terminal window)
+	isRect, rectScore := detectChangedRectangle(baseline, response, width, height)
+
+	if isRect && changedPercent > 3.0 {
+		confidence := math.Min(0.85, changedPercent/20.0+rectScore*0.5)
+		return "backdoor_likely", confidence,
+			fmt.Sprintf("%.1f%% pixels changed in rectangular region (rect score: %.2f)", changedPercent, rectScore)
+	}
+
+	if changedPercent > 2.5 {
+		return "backdoor_likely", 0.4,
+			fmt.Sprintf("%.1f%% pixels changed (possible terminal window)", changedPercent)
+	}
+
+	return "clean", 0.1, fmt.Sprintf("%.1f%% pixels changed (minor change)", changedPercent)
+}
+
+// detectChangedRectangle checks if significantly changed pixels form a rectangular region.
+// Returns (isRectangular, score) where score is 0-1 indicating rectangularity (fill ratio).
+func detectChangedRectangle(baseline, response []byte, width, height uint32) (isRectangular bool, score float64) {
+	w := int(width)
+	h := int(height)
+
+	// Find bounding box of changed pixels
+	minX, minY := w, h
+	maxX, maxY := 0, 0
+	changedCount := 0
+
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			idx := (y*w + x) * 4
+			if idx+2 >= len(response) || idx+2 >= len(baseline) {
+				continue
+			}
+			diff := pixelBrightness(baseline, idx) - pixelBrightness(response, idx)
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff > changeThreshold {
+				changedCount++
+				if x < minX {
+					minX = x
+				}
+				if x > maxX {
+					maxX = x
+				}
+				if y < minY {
+					minY = y
+				}
+				if y > maxY {
+					maxY = y
+				}
+			}
+		}
+	}
+
+	if changedCount == 0 || maxX <= minX || maxY <= minY {
+		return false, 0
+	}
+
+	// Calculate what fraction of the bounding box is filled with changed pixels.
+	// A terminal window has a solid background that fills its bounding box densely.
+	boundingArea := (maxX - minX + 1) * (maxY - minY + 1)
+	fillRatio := float64(changedCount) / float64(boundingArea)
+
+	// Threshold: >40% fill and at least 1% of total screen area.
+	// Lowered from 60% to catch terminal windows with thin borders and sparse content.
+	isRectangular = fillRatio > 0.4 && boundingArea > (w*h/100)
+	return isRectangular, fillRatio
+}
+
+// rgbaToPNG converts RGBA pixel data to a PNG byte buffer.
+func rgbaToPNG(rgba []byte, width, height uint32) ([]byte, error) {
+	w := int(width)
+	h := int(height)
+
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			idx := (y*w + x) * 4
+			if idx+3 >= len(rgba) {
+				break
+			}
+			img.SetRGBA(x, y, color.RGBA{
+				R: rgba[idx],
+				G: rgba[idx+1],
+				B: rgba[idx+2],
+				A: rgba[idx+3],
+			})
+		}
+	}
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, fmt.Errorf("png encode: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// runStickyKeysAnalysis performs the dual-check: heuristic first, then Vision API if available.
+func runStickyKeysAnalysis(ctx context.Context, baseline, response []byte,
+	width, height uint32, visionAPIKey string) StickyKeysResult {
+
+	result := StickyKeysResult{Performed: true}
+
+	// Step 1: Heuristic analysis
+	verdict, confidence, description := analyzeStickyKeysResponse(baseline, response, width, height)
+	result.HeuristicResult = description
+
+	if verdict == "clean" {
+		result.OverallVerdict = "clean"
+		result.Confidence = confidence
+		return result
+	}
+
+	// Step 2: Try Vision API for confirmation if key available
+	if visionAPIKey != "" {
+		pngData, err := rgbaToPNG(response, width, height)
+		if err == nil {
+			visionVerdict, visionDesc := analyzeStickyKeysVision(ctx, pngData, visionAPIKey)
+			result.VisionResult = visionDesc
+
+			if visionVerdict == "backdoor_confirmed" {
+				result.OverallVerdict = "backdoor_confirmed"
+				result.Confidence = math.Min(1.0, confidence+0.3)
+				return result
+			}
+
+			if visionVerdict == "clean" && verdict == "backdoor_likely" {
+				// Heuristic says backdoor, Vision says clean -- downgrade
+				result.OverallVerdict = "vulnerable"
+				result.Confidence = confidence * 0.5
+				return result
+			}
+		}
+	}
+
+	// Use heuristic result as final
+	result.OverallVerdict = verdict
+	result.Confidence = confidence
+	return result
+}

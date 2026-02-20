@@ -22,21 +22,21 @@ import (
 
 // baseConfigOptions holds common configuration shared across targets
 type baseConfigOptions struct {
-	usernames         []string
-	passwords         []string
-	keys              [][]byte
-	threads           int
-	timeout           time.Duration
-	stopOnSuccess     bool
-	snmpTier          string
-	llmConfig         *brutus.LLMConfig
-	browserTimeout    time.Duration
-	browserTabs       int
-	browserVisible    bool
-	useHTTPS          bool
-	useColor          bool
-	quiet             bool
-	verbose           bool
+	usernames        []string
+	passwords        []string
+	keys             [][]byte
+	threads          int
+	timeout          time.Duration
+	stopOnSuccess    bool
+	snmpTier         string
+	llmConfig        *brutus.LLMConfig
+	browserTimeout   time.Duration
+	browserTabs      int
+	browserVisible   bool
+	useHTTPS         bool
+	useColor         bool
+	quiet            bool
+	verbose          bool
 	useBadkeys       bool
 	protocolOverride string        // Override fingerprintx-detected protocol
 	aiMode           bool          // Enable AI-powered credential detection for HTTP
@@ -49,6 +49,12 @@ type baseConfigOptions struct {
 	sprayMode         bool
 	anthropicKey      string              // ANTHROPIC_API_KEY (read once in main)
 	perplexityKey     string              // PERPLEXITY_API_KEY (read once in main)
+	stickyKeys        bool                // Enable sticky keys detection for RDP
+	stickyKeysExec    string              // Command to execute via sticky keys backdoor
+	stickyKeysWeb     bool                // Start web terminal for sticky keys interaction
+	stickyKeysOpen    bool                // Auto-open browser when sticky keys web terminal starts
+	nlaCheck          bool                // NLA fingerprint scan mode (no auth)
+	stickyKeysScan    bool                // Sticky keys scan-only mode (no brute force)
 }
 
 // determineTLSMode returns the appropriate TLS mode based on the verify-tls flag

@@ -30,7 +30,7 @@ Usage:
 
 Target Options:
   --target <host:port>   Target host and port (requires --protocol)
-  --stdin                Read targets from stdin (fingerprintx JSON format)
+  --fingerprintx         Read targets from fingerprintx JSON on stdin
   --protocol <proto>     Protocol to use (auto-detected in pipeline mode)
 
 Credential Options:
@@ -43,6 +43,12 @@ Credential Options:
 SSH Options:
   --badkeys              Test embedded bad SSH keys (rapid7/ssh-badkeys, vagrant) [default: true]
   --no-badkeys           Disable embedded bad key testing
+
+RDP Options:
+  --sticky-keys          Enable sticky keys backdoor detection for RDP targets
+  --sticky-keys-exec <cmd>  Execute a command via sticky keys backdoor (demo/pentest)
+  --sticky-keys-web      Start interactive web terminal via sticky keys backdoor
+  --sticky-keys-open     Auto-open default browser for sticky keys web terminal
 
 Performance Options:
   -t <threads>           Number of concurrent threads (default: 10)
@@ -98,17 +104,17 @@ Fingerprintx Integration:
   and credential testing. Use naabu for port discovery, fingerprintx for service
   fingerprinting (with --json output), then pipe to Brutus:
 
-    naabu -host <targets> -silent | fingerprintx --json | brutus --stdin [options]
+    naabu -host <targets> -silent | fingerprintx --json | brutus --fingerprintx [options]
 
   For known open ports, pipe directly to fingerprintx:
 
-    echo "host:port" | fingerprintx --json | brutus --stdin [options]
+    echo "host:port" | fingerprintx --json | brutus --fingerprintx [options]
 
   Brutus automatically detects protocols from fingerprintx JSON output,
   eliminating the need to specify -protocol manually.
 
 Supported Protocols:
-  Network:      ssh, ftp, telnet, vnc
+  Network:      ssh, rdp, ftp, telnet, vnc
   Enterprise:   smb, ldap, winrm
   Databases:    mysql, postgresql, mssql, mongodb, redis, neo4j, cassandra,
                 couchdb, elasticsearch, influxdb
@@ -119,13 +125,13 @@ Supported Protocols:
 
 Examples:
   # Scan network range with naabu, fingerprint services, and test credentials
-  naabu -host 192.168.1.0/24 -silent | fingerprintx --json | brutus --stdin -P passwords.txt
+  naabu -host 192.168.1.0/24 -silent | fingerprintx --json | brutus --fingerprintx -P passwords.txt
 
   # Targeted port scan with service fingerprinting and credential testing
-  naabu -host 10.0.0.1 -p 22,3306 -silent | fingerprintx --json | brutus --stdin -u root -p "toor,admin"
+  naabu -host 10.0.0.1 -p 22,3306 -silent | fingerprintx --json | brutus --fingerprintx -u root -p "toor,admin"
 
   # Fingerprint known open ports and test with private keys
-  echo "192.168.1.10:22" | fingerprintx --json | brutus --stdin -u root,ubuntu -k ~/.ssh/id_rsa
+  echo "192.168.1.10:22" | fingerprintx --json | brutus --fingerprintx -u root,ubuntu -k ~/.ssh/id_rsa
 
   # Single target mode
   brutus --target 192.168.1.10:22 --protocol ssh -p "password,Password1"
@@ -154,5 +160,16 @@ Examples:
   # AI mode in pipeline - auto-login to any HTTP service with default device credentials
   naabu -host 192.168.1.0/24 -p 80,443,8080 -silent | fingerprintx --json | brutus --experimental-ai
 
+  # RDP credential testing with sticky keys backdoor detection (heuristic only)
+  brutus --target 10.0.0.50:3389 --protocol rdp --sticky-keys -u administrator -p "Password1"
+
+  # RDP with Vision API confirmation (requires --experimental-ai + ANTHROPIC_API_KEY)
+  brutus --target 10.0.0.50:3389 --protocol rdp --sticky-keys --experimental-ai
+
+  # Execute a command via sticky keys backdoor
+  brutus --target 10.0.0.50:3389 --protocol rdp --sticky-keys --sticky-keys-exec "whoami"
+
+  # Interactive web terminal via sticky keys backdoor (opens browser-based RDP viewer)
+  brutus --target 10.0.0.50:3389 --protocol rdp --sticky-keys --sticky-keys-web
 `)
 }

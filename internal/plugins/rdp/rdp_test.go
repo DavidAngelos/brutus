@@ -143,7 +143,7 @@ func TestPlugin_Test_ContextCancellation(t *testing.T) {
 	assert.NotNil(t, result)
 	assert.Equal(t, "rdp", result.Protocol)
 	assert.False(t, result.Success)
-	assert.NotNil(t, result.Error, "cancelled context should produce a connection error")
+	assert.NotNil(t, result.Error, "canceled context should produce a connection error")
 }
 
 func TestPlugin_Test_ResultFields(t *testing.T) {
