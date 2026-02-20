@@ -35,6 +35,7 @@ Target Options:
 
 Credential Options:
   -u <usernames>         Comma-separated usernames (default: "root,admin")
+  -U <file>              Username file (one per line)
   -p <passwords>         Comma-separated passwords
   -P <file>              Password file (one per line)
   -k <keyfile>           SSH private key file
@@ -57,6 +58,7 @@ Performance Options:
   --jitter <duration>    Random delay variance for rate limiting (e.g., 100ms)
   --max-attempts <n>     Max password attempts per user (0 = unlimited, default: 0)
   --spray                Password spraying: try each password across all users
+  --retries <n>          Max retries per credential on connection error (default: 2, 0 = disabled)
 
 Output Options:
   --json                 JSON output format

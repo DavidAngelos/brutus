@@ -145,6 +145,8 @@ type Config struct {
 	Jitter        time.Duration // random delay variance added to rate limiting (default: 0)
 	MaxAttempts   int           // max password attempts per username (0 = unlimited)
 	SprayMode     bool          // password spraying: loop users first, then passwords
+	MaxRetries    int           // max retries per credential on connection error (0 = no retry, default: 0)
+	Verbose       bool          // enable verbose logging to stderr (default: false)
 }
 
 // Result contains the outcome of testing a single credential.

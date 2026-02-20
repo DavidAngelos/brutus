@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/praetorian-inc/brutus/pkg/brutus"
@@ -83,6 +82,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "Show version information")
 	protocol := flag.String("protocol", "", "Protocol to use (auto-detected from fingerprintx)")
 	usernames := flag.String("u", "root,admin", "Comma-separated usernames")
+	usernameFile := flag.String("U", "", "Username file (one per line)")
 	passwords := flag.String("p", "", "Comma-separated passwords")
 	passwordFile := flag.String("P", "", "Password file (one per line)")
 	keyFile := flag.String("k", "", "SSH private key file")
@@ -97,6 +97,7 @@ func main() {
 	stdinMode := flag.Bool("fingerprintx", false, "Read targets from fingerprintx JSON on stdin")
 	maxAttempts := flag.Int("max-attempts", 0, "Max password attempts per user (0 = unlimited)")
 	sprayMode := flag.Bool("spray", false, "Password spraying: try each password across all users")
+	retries := flag.Int("retries", 2, "Max retries per credential on connection error (0 = no retry)")
 	showBanner := flag.Bool("banner", true, "Show ASCII banner")
 	noColor := flag.Bool("no-color", false, "Disable colored output")
 	quiet := flag.Bool("q", false, "Quiet mode - only show successful credentials")
@@ -124,11 +125,15 @@ func main() {
 
 	flag.Parse()
 
-	// Track whether -p flag was explicitly set (to support empty passwords)
+	// Track whether -p and -u flags were explicitly set
 	passwordFlagSet := false
+	usernameFlagSet := false
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "p" {
 			passwordFlagSet = true
+		}
+		if f.Name == "u" {
+			usernameFlagSet = true
 		}
 	})
 
@@ -162,9 +167,9 @@ func main() {
 	// Determine if badkeys should be used (--no-badkeys overrides --badkeys)
 	useBadkeys := resolveBadkeys(*badkeys, *noBadkeys)
 
-	// Validate: -k requires explicit -u (not default usernames)
-	if valErr := validateKeyFileFlags(*keyFile, *usernames); valErr != nil {
-		errMsg(useColor, "%v", valErr)
+	// Validate: -k requires explicit -u or -U (not default usernames)
+	if err := validateKeyFileFlags(*keyFile, usernameFlagSet, *usernameFile); err != nil {
+		errMsg(useColor, "%v", err)
 		os.Exit(1)
 	}
 
@@ -177,6 +182,15 @@ func main() {
 		*jsonOutput = true
 	}
 
+	usernameList, err := loadUsernames(*usernames, *usernameFile, usernameFlagSet)
+	if err != nil {
+		errMsg(useColor, "%v", err)
+		os.Exit(1)
+	}
+	// Fallback: if neither -u nor -U was provided, use default usernames
+	if len(usernameList) == 0 {
+		usernameList = []string{"root", "admin"}
+	}
 	passwordList, err := loadPasswords(*passwords, *passwordFile, passwordFlagSet)
 	if err != nil {
 		errMsg(useColor, "%v", err)
@@ -190,7 +204,7 @@ func main() {
 
 	// Prepare common config options
 	baseConfig := baseConfigOptions{
-		usernames:        strings.Split(*usernames, ","),
+		usernames:        usernameList,
 		passwords:        passwordList,
 		keys:             keyList,
 		threads:          *threads,
@@ -214,6 +228,7 @@ func main() {
 		jitter:           *jitter,
 		maxAttempts:      *maxAttempts,
 		sprayMode:        *sprayMode,
+		maxRetries:       *retries,
 		anthropicKey:     anthropicKey,
 		perplexityKey:    perplexityKey,
 		stickyKeys:       *stickyKeys,
@@ -307,10 +322,10 @@ func resolveBadkeys(badkeys, noBadkeys bool) bool {
 	return badkeys && !noBadkeys
 }
 
-// validateKeyFileFlags checks that -k is used with explicit -u.
-func validateKeyFileFlags(keyFile, usernames string) error {
-	if keyFile != "" && usernames == "root,admin" {
-		return fmt.Errorf("-k requires -u to specify which username(s) to test with the key\nExample: brutus --target host:22 --protocol ssh -u vagrant -k mykey.pem")
+// validateKeyFileFlags checks that -k is used with explicit -u or -U.
+func validateKeyFileFlags(keyFile string, usernameFlagSet bool, usernameFile string) error {
+	if keyFile != "" && !usernameFlagSet && usernameFile == "" {
+		return fmt.Errorf("-k requires -u or -U to specify which username(s) to test with the key\nExample: brutus --target host:22 --protocol ssh -u vagrant -k mykey.pem")
 	}
 	return nil
 }
