@@ -187,6 +187,63 @@ func (p *testRateLimitPlugin) Test(ctx context.Context, target, username, passwo
 	}
 }
 
+// TestSubSecondRateLimit tests that fractional rates (sub-1 RPS) work correctly
+func TestSubSecondRateLimit(t *testing.T) {
+	tests := []struct {
+		name            string
+		rateLimit       float64
+		numRequests     int
+		minDurationMS   int64
+		description     string
+	}{
+		{
+			name:            "0.5 RPS (1 request every 2 seconds)",
+			rateLimit:       0.5,
+			numRequests:     2,
+			minDurationMS:   2000, // First request immediate, second after 2s
+			description:     "0.5 RPS means 1 request every 2 seconds",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var callCount atomic.Int32
+
+			// Use unique plugin name per test case to avoid conflicts
+			pluginName := "test-subsecond-" + tt.name
+			Register(pluginName, func() Plugin {
+				return &testRateLimitPlugin{
+					callCount: &callCount,
+				}
+			})
+			defer ResetPlugins()
+
+			config := &Config{
+				Target:    "test:1234",
+				Protocol:  pluginName,
+				Usernames: []string{"user1", "user2"}, // 2 users
+				Passwords: []string{"pass1"},          // 1 password = 2 total requests
+				Threads:   1,                          // Single thread for predictable timing
+				Timeout:   time.Second,
+				RateLimit: tt.rateLimit,
+				Jitter:    0,
+			}
+
+			start := time.Now()
+			results, err := Brute(config)
+			duration := time.Since(start)
+
+			assert.NoError(t, err)
+			assert.Equal(t, tt.numRequests, len(results))
+
+			// Verify minimum duration matches expected rate limiting
+			assert.GreaterOrEqual(t, duration.Milliseconds(), tt.minDurationMS,
+				"Rate limiting at %.2f RPS should enforce minimum delay. %s",
+				tt.rateLimit, tt.description)
+		})
+	}
+}
+
 // TestJitterRespectsContextCancellation tests that jitter sleep respects context cancellation.
 // When StopOnSuccess is enabled and a valid credential is found, goroutines sleeping
 // in jitter should wake up immediately when context is canceled, not continue sleeping
