@@ -33,17 +33,40 @@ import (
 func routeHTTPWithAI(target, protocol string, base *baseConfigOptions) (string, []brutus.Credential) {
 	useHTTPS := protocol == "https"
 	authType, banner := detectHTTPAuthTypeWithBanner(target, useHTTPS, base.timeout, base.tlsMode, base.verbose)
-	if authType == "basic" {
-		logVerbose(base.verbose, "AI mode: %s uses Basic Auth, using LLM analysis", target)
-		if base.llmConfig != nil && base.llmConfig.Enabled {
-			creds := researchCredentialsWithLLM(target, banner, base.llmConfig, base.verbose)
-			if len(creds) > 0 {
-				logVerbose(base.verbose, "LLM researched %d credential pairs for %s", len(creds), target)
+
+	// For both basic and form-based auth, try LLM credential research from banners/headers
+	if base.llmConfig != nil && base.llmConfig.Enabled {
+		creds := researchCredentialsWithLLM(target, banner, base.llmConfig, base.verbose)
+		if len(creds) > 0 {
+			logVerbose(base.verbose, "LLM researched %d credential pairs for %s", len(creds), target)
+
+			if authType == "basic" {
+				logVerbose(base.verbose, "AI mode: %s uses Basic Auth, using LLM-researched credentials", target)
 				return protocol, creds
 			}
+
+			// For form-based: in dry-run mode, return creds with original protocol (no browser needed).
+			// In normal mode, pass creds to browser path for form submission.
+			if base.aiDryRun {
+				logVerbose(base.verbose, "AI mode: %s appears form-based, dry-run returning LLM credentials", target)
+				return protocol, creds
+			}
+
+			logVerbose(base.verbose, "AI mode: %s appears form-based, using browser automation with LLM credentials", target)
+			return "browser", creds
 		}
+	}
+
+	if authType == "basic" {
+		logVerbose(base.verbose, "AI mode: %s uses Basic Auth, no credentials researched", target)
 		return protocol, nil
 	}
+
+	if base.aiDryRun {
+		logVerbose(base.verbose, "AI mode: %s appears form-based, dry-run but no credentials researched", target)
+		return protocol, nil
+	}
+
 	logVerbose(base.verbose, "AI mode: %s appears form-based, using browser automation", target)
 	return "browser", nil
 }
@@ -129,19 +152,17 @@ func configureVisionAnalyzer(plugin *browser.Plugin, apiKey string, verbose bool
 	}
 }
 
-// configureCredentialResearcher sets up Perplexity for default credential lookup on the browser plugin.
-func configureCredentialResearcher(plugin *browser.Plugin, apiKey string, verbose bool) {
-	if apiKey != "" {
-		factory := brutus.GetAnalyzerFactory("perplexity")
+// configureCredentialResearcher sets up the LLM analyzer for default credential lookup on the browser plugin.
+func configureCredentialResearcher(plugin *browser.Plugin, llmConfig *brutus.LLMConfig, verbose bool) {
+	if llmConfig != nil && llmConfig.Enabled {
+		factory := brutus.GetAnalyzerFactory(llmConfig.Provider)
 		if factory != nil {
-			analyzer := factory(&brutus.LLMConfig{Enabled: true, Provider: "perplexity", APIKey: apiKey})
+			analyzer := factory(llmConfig)
 			if credAnalyzer, ok := analyzer.(brutus.CredentialAnalyzer); ok {
 				plugin.CredentialResearcher = credAnalyzer
-				logVerbose(verbose, "Configured Perplexity for credential research")
+				logVerbose(verbose, "Configured %s for credential research", llmConfig.Provider)
 			}
 		}
-	} else {
-		logVerbose(verbose, "No PERPLEXITY_API_KEY - skipping credential research")
 	}
 }
 
@@ -167,7 +188,7 @@ func researchBrowserCredentials(target string, base *baseConfigOptions) ([]brutu
 
 	configureVisionAnalyzer(browserPlugin, base.anthropicKey, base.verbose)
 
-	configureCredentialResearcher(browserPlugin, base.perplexityKey, base.verbose)
+	configureCredentialResearcher(browserPlugin, base.llmConfig, base.verbose)
 
 	// Call AnalyzePage to do the full two-stage AI flow
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -220,7 +241,7 @@ func researchCredentialsWithLLM(target, banner string, llmConfig *brutus.LLMConf
 	if !ok {
 		logVerbose(verbose, "LLM analyzer doesn't support credential pairs, using password-only")
 		// Fall back to password-only analysis
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
 		bannerInfo := brutus.BannerInfo{
@@ -246,7 +267,7 @@ func researchCredentialsWithLLM(target, banner string, llmConfig *brutus.LLMConf
 	}
 
 	// Use CredentialAnalyzer for full username:password pairs
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	bannerInfo := brutus.BannerInfo{

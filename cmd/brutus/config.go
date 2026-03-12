@@ -49,6 +49,8 @@ type baseConfigOptions struct {
 	sprayMode         bool
 	anthropicKey      string              // ANTHROPIC_API_KEY (read once in main)
 	perplexityKey     string              // PERPLEXITY_API_KEY (read once in main)
+	openrouterKey     string              // OPENROUTER_API_KEY (read once in main)
+	aiDryRun          bool                // --ai-dry-run
 	stickyKeys        bool                // Enable sticky keys detection for RDP
 	stickyKeysExec    string              // Command to execute via sticky keys backdoor
 	stickyKeysWeb     bool                // Start web terminal for sticky keys interaction

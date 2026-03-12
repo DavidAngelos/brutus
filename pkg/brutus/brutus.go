@@ -169,9 +169,9 @@ type Result struct {
 // LLMConfig enables optional LLM-based banner analysis
 type LLMConfig struct {
 	Enabled  bool
-	Provider string // "claude" (additional providers can be added via the plugin architecture)
+	Provider string // "claude", "perplexity", "openrouter" (via plugin architecture)
 	APIKey   string
-	Model    string // Optional: model override
+	Verbose  bool // Enable debug logging in analyzer
 }
 
 // BannerAnalyzer is an optional interface for intelligent credential suggestion

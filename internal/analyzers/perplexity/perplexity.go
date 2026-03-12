@@ -28,7 +28,6 @@ func init() {
 	brutus.RegisterAnalyzer("perplexity", func(cfg *brutus.LLMConfig) brutus.BannerAnalyzer {
 		return &Client{
 			APIKey: cfg.APIKey,
-			Model:  cfg.Model,
 		}
 	})
 }

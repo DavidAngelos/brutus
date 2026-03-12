@@ -36,17 +36,59 @@ var (
 )
 
 // setupAIConfig creates the LLM configuration for AI mode.
-func setupAIConfig(aiMode bool, anthropicKey, perplexityKey string) (*brutus.LLMConfig, error) {
+// When aiProvider is set (e.g. "openrouter"), that provider is used exclusively.
+// When aiProvider is empty, the original Anthropic/Perplexity behavior is preserved.
+func setupAIConfig(aiMode bool, anthropicKey, perplexityKey, openrouterKey, aiProvider string, verbose bool) (*brutus.LLMConfig, error) {
 	if !aiMode {
 		return nil, nil
 	}
+
+	// Explicit provider selection (new path)
+	if aiProvider != "" {
+		switch aiProvider {
+		case "openrouter":
+			if openrouterKey == "" {
+				return nil, fmt.Errorf("--ai-provider openrouter requires OPENROUTER_API_KEY")
+			}
+			return &brutus.LLMConfig{
+				Enabled:  true,
+				Provider: "openrouter",
+				APIKey:   openrouterKey,
+				Verbose:  verbose,
+			}, nil
+		case "anthropic", "claude":
+			if anthropicKey == "" {
+				return nil, fmt.Errorf("--ai-provider %s requires ANTHROPIC_API_KEY", aiProvider)
+			}
+			return &brutus.LLMConfig{
+				Enabled:  true,
+				Provider: "claude-vision",
+				APIKey:   anthropicKey,
+				Verbose:  verbose,
+			}, nil
+		case "perplexity":
+			if perplexityKey == "" {
+				return nil, fmt.Errorf("--ai-provider perplexity requires PERPLEXITY_API_KEY")
+			}
+			return &brutus.LLMConfig{
+				Enabled:  true,
+				Provider: "perplexity",
+				APIKey:   perplexityKey,
+				Verbose:  verbose,
+			}, nil
+		default:
+			return nil, fmt.Errorf("unknown --ai-provider %q (available: openrouter, anthropic, perplexity)", aiProvider)
+		}
+	}
+
+	// Original behavior: no --ai-provider flag
 	if anthropicKey == "" {
 		return nil, fmt.Errorf("--experimental-ai requires ANTHROPIC_API_KEY for Claude Vision (screenshot analysis)\n       PERPLEXITY_API_KEY is optional for additional web search")
 	}
 	if perplexityKey != "" {
-		return &brutus.LLMConfig{Enabled: true, Provider: "perplexity", APIKey: perplexityKey}, nil
+		return &brutus.LLMConfig{Enabled: true, Provider: "perplexity", APIKey: perplexityKey, Verbose: verbose}, nil
 	}
-	return &brutus.LLMConfig{Enabled: true, Provider: "claude-vision", APIKey: anthropicKey}, nil
+	return &brutus.LLMConfig{Enabled: true, Provider: "claude-vision", APIKey: anthropicKey, Verbose: verbose}, nil
 }
 
 // setupOutputWriter configures the JSON output writer and returns a cleanup function.
@@ -116,6 +158,8 @@ func main() {
 	useHTTPS := flag.Bool("https", false, "Use HTTPS for browser connections")
 	aiMode := flag.Bool("experimental-ai", false, "Enable AI-powered credential detection for HTTP services (experimental)")
 	aiVerify := flag.Bool("experimental-ai-verify", false, "Use Claude Vision to verify login success (more accurate but slower)")
+	aiProvider := flag.String("ai-provider", "", "Explicitly select AI provider (openrouter, anthropic, perplexity)")
+	aiDryRun := flag.Bool("ai-dry-run", false, "Research default credentials with LLM but do not attempt login")
 	stickyKeys := flag.Bool("sticky-keys", false, "Enable sticky keys backdoor detection for RDP targets")
 	stickyKeysExec := flag.String("sticky-keys-exec", "", "Execute command via sticky keys backdoor (requires --sticky-keys)")
 	stickyKeysWeb := flag.Bool("sticky-keys-web", false, "Start interactive web terminal via sticky keys backdoor (requires --sticky-keys)")
@@ -157,8 +201,9 @@ func main() {
 	// Read API keys once (used by AI mode and browser research)
 	perplexityKey := os.Getenv("PERPLEXITY_API_KEY")
 	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
+	openrouterKey := os.Getenv("OPENROUTER_API_KEY")
 
-	aiLLMConfig, err := setupAIConfig(*aiMode, anthropicKey, perplexityKey)
+	aiLLMConfig, err := setupAIConfig(*aiMode, anthropicKey, perplexityKey, openrouterKey, *aiProvider, *verbose)
 	if err != nil {
 		errMsg(useColor, "%v", err)
 		os.Exit(1)
@@ -231,6 +276,8 @@ func main() {
 		maxRetries:       *retries,
 		anthropicKey:     anthropicKey,
 		perplexityKey:    perplexityKey,
+		openrouterKey:    openrouterKey,
+		aiDryRun:         *aiDryRun,
 		stickyKeys:       *stickyKeys,
 		stickyKeysExec:   *stickyKeysExec,
 		stickyKeysWeb:    *stickyKeysWeb,

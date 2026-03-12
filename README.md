@@ -475,6 +475,52 @@ naabu -host 192.168.1.0/24 -p 80,443,8080 -silent | \
 
 **Non-HTTP protocols (SSH, MySQL, etc.) are unaffected by `--experimental-ai`** — they continue to use standard credential testing.
 
+### OpenRouter Support
+
+In addition to the default Anthropic/Perplexity providers, Brutus supports [OpenRouter](https://openrouter.ai), which provides access to many LLM providers through a single API:
+
+```bash
+# Set up OpenRouter API key
+export OPENROUTER_API_KEY="your-openrouter-key"
+
+# Use OpenRouter as the AI provider
+brutus --target 192.168.1.1:80 --protocol http --experimental-ai --ai-provider openrouter
+
+# Use a specific model via OpenRouter (using environment variables)
+OPENROUTER_MODEL=openai/gpt-4o-mini brutus --target 192.168.1.1:80 --protocol http --experimental-ai --ai-provider openrouter
+```
+
+**Provider selection with `--ai-provider`:**
+
+| Provider | Flag Value | Required Env Var |
+|----------|-----------|-----------------|
+| Anthropic (default) | `anthropic` or `claude` | `ANTHROPIC_API_KEY` |
+| Perplexity | `perplexity` | `PERPLEXITY_API_KEY` |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
+
+When `--ai-provider` is not specified, the default behavior is unchanged: `ANTHROPIC_API_KEY` is required, `PERPLEXITY_API_KEY` is optional.
+
+**Advanced OpenRouter Configuration (Environment Variables):**
+You can configure the OpenRouter plugin without adding flags to your CLI:
+- `OPENROUTER_MODEL` — Override the default model (e.g., `anthropic/claude-3-haiku` or `openai/gpt-4o-mini`).
+- `OPENROUTER_BASE_URL` — Override the API endpoint URL (for proxies or self-hosted instances).
+- `OPENROUTER_TIMEOUT` — Override the HTTP client timeout for AI requests (e.g., `90s`, `2m`). Defaults to 60s. Useful when using slower, un-cached models.
+
+### AI Dry-Run Mode (`--ai-dry-run`)
+
+You can instruct Brutus to utilize the AI simply to identify the application and generate a list of its known default credentials **without** actually firing any login attempts at the target service.
+
+```bash
+# Research and list credentials without touching the login form
+brutus --target 10.0.0.1:443 --protocol https --experimental-ai \
+  --ai-provider openrouter --ai-dry-run
+```
+
+This is extremely useful when:
+1. You just want offline research based on the banner/headers.
+2. The target has aggressive account lockout policies.
+3. You want to verify what credentials the AI *would* try before running a live attack.
+
 ---
 
 ## RDP: Sticky Keys Backdoor Detection & Exploitation

@@ -144,6 +144,20 @@ func runSingleTarget(target, protocol, tlsMode string, base *baseConfigOptions, 
 		configureAICredentials(config, aiCreds, base.verbose)
 	}
 
+	// AI Dry-Run: only research and list credentials, don't attempt login
+	if base.aiDryRun {
+		fmt.Printf("\n%s\n", heading(base.useColor, "AI Dry-Run: Researched Credentials"))
+		fmt.Printf("  Target: %s (%s)\n", target, protocol)
+		if len(config.Credentials) > 0 {
+			for _, c := range config.Credentials {
+				fmt.Printf("  [+] %s:%s\n", c.Username, c.Password)
+			}
+		} else {
+			fmt.Printf("  [!] No credentials researched\n")
+		}
+		return nil, false
+	}
+
 	// Handle browser-specific configuration
 	if protocol == "browser" {
 		if err := configureBrowser(config, target, base); err != nil {

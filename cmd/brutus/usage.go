@@ -90,6 +90,17 @@ AI Options (automatic credential detection for HTTP services):
                                   (Non-HTTP protocols like SSH are unaffected)
   --experimental-ai-verify                   Use Claude Vision to verify login success by comparing
                                   before/after screenshots (more accurate but slower/costlier)
+
+AI Provider Options (use with --experimental-ai):
+  --ai-provider <provider>       Select AI provider: openrouter, anthropic, perplexity
+                                  Default: auto-select from available API keys
+                                  openrouter requires: OPENROUTER_API_KEY
+  --ai-dry-run                   Only list AI-suggested credentials, don't perform brute force (research only)
+
+  Advanced AI options (environment variables):
+  OPENROUTER_MODEL, OPENROUTER_BASE_URL, OPENROUTER_TIMEOUT
+
+  Browser Options (used with --experimental-ai for form-based login):
   --browser-timeout <duration>  Total timeout for browser operations (default: 60s)
   --browser-tabs <n>            Number of concurrent browser tabs (default: 3)
   --browser-visible             Show browser window for debugging/demo (default: headless)

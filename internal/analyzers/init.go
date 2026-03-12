@@ -17,6 +17,7 @@ package analyzers
 // Import all analyzers to auto-register them
 import (
 	_ "github.com/praetorian-inc/brutus/internal/analyzers/claude"
+	_ "github.com/praetorian-inc/brutus/internal/analyzers/openrouter"
 	_ "github.com/praetorian-inc/brutus/internal/analyzers/perplexity"
 	_ "github.com/praetorian-inc/brutus/internal/analyzers/vision"
 )

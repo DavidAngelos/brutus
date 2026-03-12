@@ -38,7 +38,6 @@ func init() {
 	brutus.RegisterAnalyzer("claude", func(cfg *brutus.LLMConfig) brutus.BannerAnalyzer {
 		return &Client{
 			APIKey: cfg.APIKey,
-			Model:  cfg.Model,
 		}
 	})
 }
